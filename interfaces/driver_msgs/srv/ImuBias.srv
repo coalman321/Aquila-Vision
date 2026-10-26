@@ -1,0 +1,12 @@
+# Which IMU sensor-error operation to run.
+uint8 command
+
+uint8 COMMAND_ESTIMATE = 0  # start stationary estimation (device must remain still, X axis North)
+uint8 COMMAND_CLEAR = 1     # clear stored sensor-error parameters
+---
+uint8 resp_code
+
+uint8 RESPONSE_OK = 0      # command completed successfully
+uint8 RESPONSE_FAILED = 1  # command was attempted and failed -- see response_msg
+
+string response_msg

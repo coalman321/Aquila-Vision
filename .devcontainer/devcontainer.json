@@ -1,0 +1,66 @@
+{
+    "name": "aquila",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "."
+    },
+
+    // Run as the image's non-root user and remap its UID/GID to the host
+    // user's (Linux hosts only) so files created or modified in the workspace
+    // keep the correct ownership and permissions on the host.
+    "containerUser": "dev",
+    "remoteUser": "dev",
+    "updateRemoteUserUID": true,
+
+    // Reap the zombie processes left behind by Bazel's server and actions.
+    "init": true,
+
+    // Docker defaults the hostname to the container ID, which shows up as a
+    // random hex string in the shell prompt. Pin it to something readable.
+    "runArgs": ["--hostname=aquila"],
+
+    // Pass the host's NVIDIA GPUs through (docker run --gpus all) when the host
+    // has them, so CUDA tests can launch kernels. "optional" keeps the container
+    // starting on hosts without a GPU. Needs nvidia-container-toolkit on the host.
+    "hostRequirements": {
+        "gpu": "optional"
+    },
+
+    "mounts": [
+        // Keep Bazel's output base and repository cache in a named volume:
+        // it survives container rebuilds, and is much faster than a bind mount.
+        "source=aquila-bazel-cache-${devcontainerId},target=/home/dev/.cache/bazel,type=volume",
+
+        // Keep Claude Code's config dir (login credentials, settings, session
+        // history) in a named volume so you stay logged in across rebuilds.
+        "source=aquila-claude-config-${devcontainerId},target=/home/dev/.claude,type=volume",
+
+        // Keep the bash history file in a named volume so shell history
+        // survives container rebuilds. The Dockerfile points HISTFILE here.
+        "source=aquila-shell-history-${devcontainerId},target=/home/dev/.shell-history,type=volume",
+
+        // Keep the GitLab access token for the private Bazel registry (read by
+        // tools/gitlab_cred_helper) in a named volume so it only has to be set
+        // up once, not after every rebuild.
+        "source=aquila-gitlab-config-${devcontainerId},target=/home/dev/.config/gitlab,type=volume"
+    ],
+
+    "containerEnv": {
+        // By default Claude Code keeps its global state in ~/.claude.json, a
+        // file outside ~/.claude that a volume can't cover. Pointing the config
+        // dir at the volume moves that file inside it.
+        "CLAUDE_CONFIG_DIR": "/home/dev/.claude"
+    },
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "BazelBuild.vscode-bazel",
+                "llvm-vs-code-extensions.vscode-clangd",
+                "Anthropic.claude-code",
+                "streetsidesoftware.code-spell-checker",
+                "ms-python.python"
+            ]
+        }
+    }
+}

@@ -1,0 +1,26 @@
+diff --git a/cuda/private/repositories.bzl b/cuda/private/repositories.bzl
+index 486bd01..14c88c8 100644
+--- a/cuda/private/repositories.bzl
++++ b/cuda/private/repositories.bzl
+@@ -401,6 +401,21 @@ and https://github.com/llvm/llvm-project/blob/6de6f7b46/clang/lib/Driver/ToolCha
+     repository_ctx.file("nvvm/bin/__PATCHED_FOR_CLANG__", notice)
+     repository_ctx.file("nvvm/include/__PATCHED_FOR_CLANG__", notice)
+ 
++    # Clang learns the CUDA version by scanning <cuda-path>/include/cuda.h for `#define CUDA_VERSION`.
++    # Without it clang assumes an unknown "newer" CUDA, warns, and defaults to an old PTX version that
++    # cannot target recent GPUs (e.g. PTX 8.6 for sm_110). The NVVM component is versioned with the
++    # toolkit's major.minor, so derive CUDA_VERSION from it. The line is inside `#if 0` because only
++    # the driver reads this file; the real cuda.h (from cudart) always comes first on the include path.
++    if repository_ctx.attr.version:
++        major, minor = repository_ctx.attr.version.split(".")[:2]
++        repository_ctx.file("nvvm/include/cuda.h", """\
++// Stub written by rules_cuda for clang's CUDA version detection. Not a usable header.
++#if 0
++#define CUDA_VERSION {}
++#endif
++#error "rules_cuda's nvvm stub cuda.h was included; depend on the CUDA runtime headers instead"
++""".format(int(major) * 1000 + int(minor) * 10))
++
+ def _cuda_component_impl(repository_ctx):
+     component_name = None
+     if repository_ctx.attr.component_name:

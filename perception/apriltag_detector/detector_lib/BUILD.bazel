@@ -1,0 +1,100 @@
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+# rclcpp (AprilDetect's logger) and OpenCV are cc_shared_library targets; see
+# //basin/core/node_core/BUILD.bazel.
+DYNAMIC_DEPENDENCIES = {
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rosdistro//cc:opencv": "@rosdistro//cc:opencv_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+# The GPU half of the detector: FRC 971's CUDA quad finder (threshold, connected components,
+# line fitting) feeding apriltag's CPU decoder. cuda.cpp is here, not in :detector_lib, because the
+# kernels call its CheckAndSynchronize.
+cuda_library(
+    name = "gpu_detector",
+    srcs = [
+        "src/971apriltag.cu",
+        "src/apriltag_detect.cu",
+        "src/cuda.cpp",
+        "src/labeling_allegretti_2019_BKE.cu",
+        "src/line_fit_filter.cu",
+        "src/points.cu",
+        "src/threshold.cu",
+    ],
+    hdrs = [
+        "include/detector_lib/971apriltag.hpp",
+        "include/detector_lib/cuda.hpp",
+        "include/detector_lib/detector_common.hpp",
+        "include/detector_lib/gpu_image.hpp",
+        "include/detector_lib/labeling_allegretti_2019_BKE.hpp",
+        "include/detector_lib/line_fit_filter.hpp",
+        "include/detector_lib/points.hpp",
+        "include/detector_lib/threshold.hpp",
+    ],
+    # The sources are C++20 (std::span, parenthesized aggregate init); the toolchain default is 17.
+    copts = ["-std=c++20"],
+    includes = ["include"],
+    deps = [
+        "@apriltag_frc971//:apriltag",
+        # CCCL 3.x's CUB includes Thrust headers (cub/util_type.cuh), so :thrust rather than :cub.
+        "@cccl//:thrust",
+    ],
+)
+
+# AprilDetect: runs :gpu_detector on a frame and solves each tag's (or, in multitag mode, the
+# camera's) pose with OpenCV's solvePnP.
+cc_library(
+    name = "detector_lib",
+    srcs = ["src/april_detector.cpp"],
+    hdrs = ["include/detector_lib/april_detector.hpp"],
+    # Includes :gpu_detector's C++20 headers.
+    copts = ["-std=c++20"],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":gpu_detector",
+        "@apriltag_frc971//:apriltag",
+        "@rosdistro//cc:eigen",
+        "@rules_cuda//cuda:runtime",
+    ],
+)
+
+# Runs the whole pipeline on a GPU. Skips unless there is a device the build has kernels for: the
+# default archs are Thor's, so on a desktop GPU run it with --config=sm86 (see .bazelrc).
+cc_test(
+    name = "april_detector_test",
+    size = "small",
+    srcs = ["test/april_detector_test.cpp"],
+    # Runs kernels: CI leaves "cuda" tests out on a runner without a GPU it can run them on.
+    tags = ["cuda"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":detector_lib",
+        "@apriltag_frc971//:apriltag",
+        "//tools/cuda_test:gpu_available",
+        "@rosdistro//cc:googletest",
+        "@rules_cuda//cuda:runtime",
+    ],
+)

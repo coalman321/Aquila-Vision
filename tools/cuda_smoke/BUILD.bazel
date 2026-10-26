@@ -1,0 +1,35 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+
+# Exercises the hermetic CUDA toolchain from MODULE.bazel and .bazelrc: .cu files compiled by the
+# hermetic clang against the CUDA 13.2 redistributables, consumed by a plain cc_test with the CUDA
+# runtime linked in. thrust_reduce covers CCCL (Thrust and CUB), whose headers lean hardest on the
+# compiler's CUDA support.
+cuda_library(
+    name = "vector_add",
+    srcs = ["vector_add.cu"],
+    hdrs = ["vector_add.h"],
+)
+
+cuda_library(
+    name = "thrust_reduce",
+    srcs = ["thrust_reduce.cu"],
+    hdrs = ["thrust_reduce.h"],
+    deps = [
+        "@cccl//:cub",
+        "@cccl//:thrust",
+    ],
+)
+
+cc_test(
+    name = "cuda_smoke_test",
+    size = "small",
+    srcs = ["cuda_smoke_test.cc"],
+    # Runs kernels: CI leaves "cuda" tests out on a runner without a GPU it can run them on.
+    tags = ["cuda"],
+    deps = [
+        ":thrust_reduce",
+        ":vector_add",
+        "//tools/cuda_test:gpu_available",
+    ],
+)

@@ -1,0 +1,33 @@
+load("@rosidl_default_generators//:defs.bzl", "ros_message")
+load("//interfaces:defs.bzl", "interface_definitions")
+
+package(default_visibility = ["//visibility:public"])
+
+ros_message(
+    name = "BoolStamped",
+    src = "BoolStamped.msg",
+    package = "generic_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+    ],
+)
+
+ros_message(
+    name = "Float32Stamped",
+    src = "Float32Stamped.msg",
+    package = "generic_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+    ],
+)
+
+ros_message(
+    name = "RawPacket",
+    src = "RawPacket.msg",
+    package = "generic_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+    ],
+)
+
+interface_definitions(kind = "msg")

@@ -1,0 +1,6 @@
+exports_files([
+    "rules_rs_zlib_1.3.dfsg-3.1ubuntu2.2.patch",
+    "libpcap_pregenerate_parser.patch",
+    "rules_cuda_clang_copts_after_toolchain_flags.patch",
+    "rules_cuda_clang_cuda_version.patch",
+])

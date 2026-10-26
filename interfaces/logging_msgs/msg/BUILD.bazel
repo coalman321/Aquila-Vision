@@ -1,0 +1,48 @@
+load("@rosidl_default_generators//:defs.bzl", "ros_message")
+load("//interfaces:defs.bzl", "interface_definitions")
+
+package(default_visibility = ["//visibility:public"])
+
+ros_message(
+    name = "LogMetadata",
+    src = "LogMetadata.msg",
+    package = "logging_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+    ],
+)
+
+ros_message(
+    name = "EventStatus",
+    src = "EventStatus.msg",
+    package = "logging_msgs",
+)
+
+ros_message(
+    name = "SnapshotStatus",
+    src = "SnapshotStatus.msg",
+    package = "logging_msgs",
+)
+
+ros_message(
+    name = "LoggerStatus",
+    src = "LoggerStatus.msg",
+    package = "logging_msgs",
+    deps = [
+        ":EventStatus",
+        ":SnapshotStatus",
+        "@builtin_interfaces//msg:Time",
+    ],
+)
+
+ros_message(
+    name = "PcapCapture",
+    src = "PcapCapture.msg",
+    package = "logging_msgs",
+    deps = [
+        "@builtin_interfaces//msg:Time",
+        "@std_msgs//msg:Header",
+    ],
+)
+
+interface_definitions(kind = "msg")

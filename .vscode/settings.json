@@ -1,0 +1,30 @@
+{
+    "clangd.path": "${workspaceFolder}/tools/vscode/clangd",
+    "clangd.arguments": [
+        "--background-index",
+        "--compile-commands-dir=${workspaceFolder}"
+    ],
+    "python.analysis.languageServerMode": "default",
+    "python.analysis.extraPaths": [
+        "basin/launch/api",
+        "basin/logging/log_util_py",
+        "bazel-Aquila-Vision/external/ament_copyright+",
+        "bazel-Aquila-Vision/external/ament_flake8+",
+        "bazel-Aquila-Vision/external/ament_index_python+",
+        "bazel-Aquila-Vision/external/ament_pep257+",
+        "bazel-Aquila-Vision/external/launch+",
+        "bazel-Aquila-Vision/external/rules_python+",
+        "bazel-Aquila-Vision/external/rules_python++pip+pip_ros_312_numpy_cp312_cp312_manylinux_2_27_aarch64_8ee9c4ee/site-packages",
+        "bazel-Aquila-Vision/external/rules_python++pip+pip_ros_312_pyyaml_cp312_cp312_manylinux_2_17_aarch64_9149cad2/site-packages",
+        "bazel-Aquila-Vision/external/rules_python++pip+pip_ros_312_setuptools_py3_none_any_51a52592/site-packages",
+        "tools/ros_test_domain",
+        "tools/runfiles_tar"
+    ],
+    "python.analysis.exclude": [
+        "bazel-bin/**",
+        "bazel-Aquila-Vision/**",
+        "bazel-out/**",
+        "bazel-testlogs/**"
+    ],
+    "bazel.buildifier.fixOnFormat": true
+}

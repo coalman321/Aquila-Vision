@@ -1,0 +1,133 @@
+load("@aspect_rules_py//py:defs.bzl", "py_binary")
+load("@rclcpp_components//:defs.bzl", "rclcpp_components_register_nodes")
+load("@rosdistro//ament:defs.bzl", "ament_index")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library", "py_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "camera_cal_msgs",
+    deps = [
+        "//interfaces/calibration_msgs/msg:CamCalStatus",
+        "//interfaces/calibration_msgs/srv:CamCalRequest",
+        "@sensor_msgs//msg:Image",
+    ],
+)
+
+# Every RCR cc_shared_library the node reaches, directly or through //basin/core/node_core. OpenCV is
+# here too: cv_bridge links the shared @rosdistro//cc:opencv, so the calibrator has to use that same
+# copy rather than link a second one statically.
+DYNAMIC_DEPENDENCIES = {
+    "@cv_bridge//:cv_bridge": "@cv_bridge//:cv_bridge_library",
+    "@image_transport//:image_transport": "@image_transport//:image_transport_library",
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rclcpp_components//:rclcpp_components": "@rclcpp_components//:rclcpp_components_library",
+    "@rosdistro//cc:opencv": "@rosdistro//cc:opencv_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+# The calibration logic, with no ROS in it. The original built an optional CUDA path (CAMERA_CAL_HAVE_CUDA)
+# when OpenCV's cudawarping/cudaimgproc modules were found; the OpenCV here has none, so this is the
+# CPU path.
+cc_library(
+    name = "camera_cal_lib",
+    srcs = ["src/calibrator.cpp"],
+    hdrs = ["include/camera_cal/calibrator.hpp"],
+    includes = ["include"],
+    deps = ["@rosdistro//cc:opencv_library"],
+)
+
+cc_library(
+    name = "camera_cal_node",
+    srcs = ["src/camera_cal_node.cpp"],
+    hdrs = [
+        "include/camera_cal/camera_cal_node.hpp",
+        "include/camera_cal/camera_cal_params.hpp",
+    ],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":camera_cal_lib",
+        ":camera_cal_msgs",
+        "//basin/core/node_core",
+    ],
+)
+
+# Wraps :camera_cal_node as a dlopen-able plugin (see //perception/trt_detector/object_detector_ros),
+# loadable by a //basin/core/node_core:basin_container config as package `camera_cal`, library_name
+# camera_cal::CameraCalNode.
+cc_shared_library(
+    name = "camera_cal_component",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+    exports_filter = [
+        ":camera_cal_node",
+        ":camera_cal_lib",
+    ],
+    deps = [":camera_cal_node"],
+)
+
+rclcpp_components_register_nodes(
+    name = "camera_cal_components",
+    component = ":camera_cal_component",
+    plugins = ["camera_cal::CameraCalNode"],
+)
+
+# image_transport resolves its publisher/subscriber plugins through pluginlib while
+# libimage_transport.so is still loading, so whatever hosts the component needs image_transport's
+# own index too; `deps` brings it along.
+ament_index(
+    name = "ament_index",
+    components = [":camera_cal_components"],
+    export_name = "camera_cal",
+    libraries = [":camera_cal_msgs"],
+    deps = [
+        "@image_transport//:ament_index_package",
+        "@image_transport//:ament_index_plugin",
+    ],
+)
+
+cc_binary(
+    name = "camera_cal_main",
+    srcs = ["src/camera_cal_main.cc"],
+    data = [":ament_index"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = DYNAMIC_DEPENDENCIES.values() + [":camera_cal_node"],
+)
+
+py_ros_library(
+    name = "camera_cal_py_msgs",
+    deps = [
+        "//interfaces/calibration_msgs/msg:CamCalStatus",
+        "//interfaces/calibration_msgs/srv:CamCalRequest",
+    ],
+)
+
+# Curses client for the node's request service: `bazel run //perception/camera_cal:camera_cal_tui`.
+py_binary(
+    name = "camera_cal_tui",
+    srcs = ["scripts/camera_cal_tui.py"],
+    main = "scripts/camera_cal_tui.py",
+    deps = [
+        ":camera_cal_py_msgs",
+        "@rclpy",
+    ],
+)

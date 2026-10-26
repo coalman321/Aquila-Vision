@@ -1,0 +1,29 @@
+# Request type to determine how to decode the rest of the request
+uint8 request_id
+
+uint8 REQUEST_NONE = 0 # used to initiate a call and response check
+uint8 REQUEST_START = 1 # used to start writing a log snapshot
+uint8 REQUEST_STOP = 2 # used to stop writing a log snapshot
+uint8 REQUEST_INVALID = 3 # used as an end of list check
+
+# Name for the snapshot
+string snapshot_name
+
+# description for the snapshot
+string description
+
+# Snapshot tags
+string[] tags
+---
+
+# machine readable code for the response
+uint8 resp_code
+
+uint8 RESPONSE_OK = 0 # Used to indicate the operation completed successfully
+uint8 RESPONSE_REQ_INVALID = 1 # Used to indicate the request ID field is invalid
+uint8 RESPONSE_INVALID_NAME = 2 # Used to indicate the name of the snapshot is invalid
+uint8 RESPONSE_SNAPSHOT_ACTIVE = 3 # Used to indicate the snapshot with this name is already running
+uint8 RESPONSE_SNAPSHOT_EXISTS = 4 # Used to indicate the snapshot with this name was already completed
+
+# human readable response message
+string response_msg

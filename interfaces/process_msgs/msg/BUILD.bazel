@@ -1,0 +1,64 @@
+load("@rosidl_default_generators//:defs.bzl", "ros_message")
+load("//interfaces:defs.bzl", "interface_definitions")
+
+package(default_visibility = ["//visibility:public"])
+
+ros_message(
+    name = "DispatchLogEntry",
+    src = "DispatchLogEntry.msg",
+    package = "process_msgs",
+    deps = [
+        "@builtin_interfaces//msg:Time",
+    ],
+)
+
+ros_message(
+    name = "ProcessHeartbeat",
+    src = "ProcessHeartbeat.msg",
+    package = "process_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+    ],
+)
+
+ros_message(
+    name = "ProcessInfo",
+    src = "ProcessInfo.msg",
+    package = "process_msgs",
+)
+
+ros_message(
+    name = "ProcessList",
+    src = "ProcessList.msg",
+    package = "process_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+        ":ProcessInfo",
+    ],
+)
+
+ros_message(
+    name = "PublishProvenance",
+    src = "PublishProvenance.msg",
+    package = "process_msgs",
+)
+
+ros_message(
+    name = "StateSnapshot",
+    src = "StateSnapshot.msg",
+    package = "process_msgs",
+    deps = [
+        "@builtin_interfaces//msg:Time",
+    ],
+)
+
+ros_message(
+    name = "SystemInfo",
+    src = "SystemInfo.msg",
+    package = "process_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+    ],
+)
+
+interface_definitions(kind = "msg")

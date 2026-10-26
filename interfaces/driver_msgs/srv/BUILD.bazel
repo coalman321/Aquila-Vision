@@ -1,0 +1,24 @@
+load("@rosidl_default_generators//:defs.bzl", "ros_service")
+load("//interfaces:defs.bzl", "interface_definitions")
+
+package(default_visibility = ["//visibility:public"])
+
+ros_service(
+    name = "ImuBias",
+    src = "ImuBias.srv",
+    package = "driver_msgs",
+)
+
+ros_service(
+    name = "LeverArmCalibration",
+    src = "LeverArmCalibration.srv",
+    package = "driver_msgs",
+)
+
+ros_service(
+    name = "RebootDevice",
+    src = "RebootDevice.srv",
+    package = "driver_msgs",
+)
+
+interface_definitions(kind = "srv")

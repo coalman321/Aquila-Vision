@@ -1,0 +1,73 @@
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "detector_node_msgs",
+    deps = [
+        "//interfaces/localization_msgs/msg:TagSolution",
+        "@geometry_msgs//msg:PoseStamped",
+        "@geometry_msgs//msg:TransformStamped",
+        "@sensor_msgs//msg:CameraInfo",
+        "@sensor_msgs//msg:Image",
+        "@vision_msgs//msg:Detection3DArray",
+    ],
+)
+
+# Every RCR cc_shared_library the node reaches, directly or through //basin/core/node_core and
+# //perception/apriltag_detector/detector_lib (see //basin/core/node_core/BUILD.bazel). OpenCV is
+# here too: cv_bridge links the shared @rosdistro//cc:opencv, so detector_lib's solvePnP has to use
+# that same copy rather than link a second one statically.
+DYNAMIC_DEPENDENCIES = {
+    "@cv_bridge//:cv_bridge": "@cv_bridge//:cv_bridge_library",
+    "@image_transport//:image_transport": "@image_transport//:image_transport_library",
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rosdistro//cc:opencv": "@rosdistro//cc:opencv_library",
+    "@tf2//:tf2": "@tf2//:tf2_library",
+    "@tf2_ros//:tf2_ros": "@tf2_ros//:tf2_ros_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+cc_binary(
+    name = "detector_node",
+    srcs = [
+        "include/landmark_detector_ros/detector_node.hpp",
+        "include/landmark_detector_ros/detector_node_params.hpp",
+        "src/detector_node.cpp",
+    ],
+    # image_transport resolves its publisher/subscriber plugins (raw, plus any others registered)
+    # through pluginlib while libimage_transport.so is still loading, so without these the node dies
+    # in a static initializer before main().
+    data = [
+        "@image_transport//:ament_index_package",
+        "@image_transport//:ament_index_plugin",
+    ],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":detector_node_msgs",
+        "//basin/core/node_core",
+        "//perception/apriltag_detector/detector_lib",
+        "@rosdistro//cc:eigen",
+    ],
+)

@@ -1,0 +1,18 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# `imports = ["."]` makes `import ros_test_domain` resolve to the file below this directory.
+py_library(
+    name = "ros_test_domain",
+    srcs = ["ros_test_domain.py"],
+    imports = ["."],
+)
+
+py_test(
+    name = "ros_test_domain_test",
+    size = "small",
+    srcs = ["test_ros_domain.py"],
+    main = "test_ros_domain.py",
+    deps = [":ros_test_domain"],
+)

@@ -1,0 +1,170 @@
+# Point Bazel at the workshop's private registry (robotics/workshop-bazel-registry) and the
+# ROS Central Registry (RCR) in addition to the default Bazel Central Registry (BCR), so that
+# packages from either declared in MODULE.bazel can resolve. A module is taken from the first
+# registry that has it, so the private one comes first.
+common --registry=https://robotics.pages.tuckers-workshop.xyz/workshop-bazel-registry \
+       --registry=https://openrobotics.github.io/ros-central-registry \
+       --registry=https://bcr.bazel.build
+
+# The private registry and the source archives it lists both need a GitLab access token; this
+# helper supplies it (see README.md, "Private module registry").
+common --credential_helper=robotics.pages.tuckers-workshop.xyz=%workspace%/tools/gitlab_cred_helper/gitlab_cred_helper.sh
+common --credential_helper=gitlab.tuckers-workshop.xyz=%workspace%/tools/gitlab_cred_helper/gitlab_cred_helper.sh
+
+# Lets "0.0.0" placeholder versions in MODULE.bazel resolve to whatever
+# version is actually pulled in transitively by the loaded ROS variant.
+common --check_direct_dependencies=off
+
+# Shared remote cache; speeds up fresh checkouts by reusing artifacts already built elsewhere.
+common --remote_cache=https://bazel.int.tuckers-workshop.xyz
+common --remote_upload_local_results=true
+common --remote_cache_compression=true
+
+# Critical ROS environment variables needed at build/run/test time.
+# LD_LIBRARY_PATH/DYLD_LIBRARY_PATH="lib" matters more than it looks: RMW
+# implementations (e.g. librmw_fastrtps_cpp.so) are loaded via dlopen() by
+# name at runtime, not linked directly, so their own transitive shared-lib
+# deps (e.g. librmw_dds_common.so) are only found via the library search
+# path -- RUNPATH alone isn't enough here. Without this, any binary/test
+# that touches rclcpp fails with "librmw_dds_common.so: cannot open shared
+# object file". "lib" is relative to the runfiles root ("_main/"), which is
+# where bazel run/test set the working directory.
+common --test_env=ROS_DISTRO=lyrical
+common --test_env=ROS_HOME=.ros
+common --test_env=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+common --test_env=LD_LIBRARY_PATH=lib
+common --test_env=DYLD_LIBRARY_PATH=lib
+common --test_env=TMPDIR=/tmp
+common --run_env=ROS_DISTRO=lyrical
+common --run_env=ROS_HOME=.ros
+common --run_env=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+common --run_env=LD_LIBRARY_PATH=lib
+common --run_env=DYLD_LIBRARY_PATH=lib
+common --run_env=TMPDIR=/tmp
+
+# `bazel run` deliberately unsets RUNFILES_DIR before exec'ing the binary, but RCR's rclcpp
+# resolves message typesupport by type name (rclcpp::get_typesupport_library, used by every
+# generic subscription/publisher/client/service) through the Bazel runfiles library, which needs
+# it: without this such a node dies on first use with "Failed to create Runfiles: cannot find
+# runfiles". Relative, like the "lib" paths above: bazel run starts every binary in
+# <binary>.runfiles/_main, so ".." is that binary's own runfiles root. Tests set the variable
+# themselves.
+common --run_env=RUNFILES_DIR=..
+
+# Restricts build actions to a hermetic environment for reproducibility.
+common --incompatible_strict_action_env
+
+# Automatically pick the right platform config (linux/macos) at build time.
+common --enable_platform_specific_config
+
+# Claude thought this was needed at one point but it seems to slow the build
+# significantly. with this unset it defaults to toplevel which saves build / test time
+# build --remote_download_outputs=all
+
+# With the default toplevel download mode, a compile that hits the remote cache never writes its
+# intermediate outputs to disk, so generated headers (rosidl messages, the llvm module's libc++
+# include trees -- extensionless, hence the second pattern) stay missing and clangd reports
+# "file not found" in code that builds fine. Fetch just the headers.
+build --remote_download_regex='.*\.(h|hh|hpp|hxx|inc|inl|ipp|tcc|cuh)$|.*_include_search_directory/.*'
+
+# Use the hermetic LLVM toolchain instead of any host compiler.
+build --repo_env="BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1"
+
+# RCR's generated Python message packages (`rcl_interfaces.msg`, `status_msgs.msg`, ...) are
+# PEP 420 namespace packages, and its sitecustomize hook (see @rosidl_generator_py//:sitecustomize.py)
+# only remaps `from <pkg>.msg import Type` for those. Without this flag Bazel drops an empty
+# __init__.py into every runfiles directory, which turns them into regular packages and the hook
+# never fires: `import rclpy` then dies with "cannot import name 'Parameter' from
+# 'rcl_interfaces.msg'". Needed by any py_binary/py_test that imports rclpy or a message package
+# (see //basin/safety:fault_monitor_tui).
+build --incompatible_default_to_explicit_init_py
+
+# Ignore host-level pip configuration so Python deps resolve the same way
+# for everyone.
+build --repo_env="PIP_CONFIG_FILE=/dev/null"
+
+# Build curl, and with it the AWS SDK's crypto (//data_pipe/data_uploader), on OpenSSL instead of
+# the BoringSSL that @aws_sdk defaults to. The uploader runs as a component inside basin_container,
+# where libfastdds.so has already loaded an OpenSSL and exports its symbols (OpenSSL_version, EVP_*,
+# ...). The component's own statically linked BoringSSL exports the same names, so its calls bind to
+# fastdds's copy instead, and aws-c-cal aborts at startup with "libcrypto mislink" (its check that
+# the libcrypto it was compiled against is the one in the process). Two copies of the same OpenSSL
+# can't disagree that way. Only targets that depend on @curl are affected.
+build --@curl//:ssl_lib=openssl
+
+# Restrict test sandboxes from accessing the network.
+test --sandbox_default_allow_network=false
+
+# PCL's memory.h #warns when Eigen's "handmade" aligned malloc is in use,
+# because a TU built with AVX (32-byte alignment) could mix with one built
+# without it (16-byte). Every TU here is built by the same hermetic toolchain
+# with the same flags, so the mismatch it guards against can't happen; silence
+# it via PCL's own flag rather than defining PCL_SILENCE_MALLOC_WARNING by hand.
+build --@pcl//:pcl_silence_malloc_warning=True
+
+# rosbag2_cpp's CMake build enables -Wthread-safety, but its manual
+# lock()/unlock() pairs (MessageCache::get_consumer_buffer/
+# release_consumer_buffer) trip -Wthread-safety-analysis under this libc++
+# toolchain. It's vendored upstream code, so silence it for that repo only and
+# keep the analysis on for first-party code. ("[+]" rather than "\+": bazelrc
+# treats a backslash as an escape, so "\+" would reach the regex as a bare "+".)
+build --per_file_copt=external/rosbag2_cpp[+]/.*@-Wno-thread-safety-analysis
+
+# abseil's headers use lifetime_capture_by(this), which clang 23 deprecates, so every translation
+# unit that includes them warns about each use: ~20,000 warnings (147k lines of log) building OpenCV
+# (whose dnn module pulls in protobuf) for //perception/apriltag_detector. None of it is ours to fix,
+# so compile those three repos without warnings. Host too: protobuf's code generators build for the
+# exec platform. Scoped to just these repos so every other third-party compile keeps its cache hit.
+build --per_file_copt=external/(abseil-cpp|protobuf|opencv)[+]/.*@-w
+build --host_per_file_copt=external/(abseil-cpp|protobuf|opencv)[+]/.*@-w
+
+# Debug info for first-party code only. Fastbuild emits none, so without this basin binaries
+# would have symbol tables but no DWARF for anything you'd want to debug. //basin's own sources
+# are the only ones affected, so ROS and every other third-party compile keeps its command line
+# (and its cache hit).
+build --per_file_copt=basin/.*@-g
+
+# ...and don't let the linker throw it away: by default Bazel links fastbuild binaries with -Wl,-S,
+# which drops the DWARF just generated. Nothing else is compiled with -g, so this changes no
+# third-party output, only which debug sections survive the link.
+build --strip=never
+
+# CUDA is compiled by the hermetic clang, not nvcc. nvcc parses host code with its own front end,
+# which is only tested against libstdc++ and can't parse this toolchain's libc++ headers
+# (<string>, <string_view>, <algorithm> all fail). Clang compiles .cu files with the same libc++ as
+# every other target; the CUDA redistributables (MODULE.bazel) still supply the headers, cudart,
+# libdevice and ptxas. CUDA_COMPILER_USE_CC_TOOLCHAIN makes rules_cuda take clang from the
+# registered C++ toolchain, so each machine gets the clang for its own CPU.
+common --repo_env=CUDA_COMPILER_USE_CC_TOOLCHAIN=true
+build --@rules_cuda//cuda:compiler=clang
+
+# CUDA code targets Jetson Thor (sm_110): cubins for it, plus its PTX so the driver can JIT for a
+# newer GPU.
+build --@rules_cuda//cuda:archs=compute_110:compute_110,sm_110
+
+# PTX only JITs forward, so the above can't run on an older desktop GPU (the driver reports "no
+# kernel image is available"). --config=sm86 adds Ampere (RTX 30xx) cubins so CUDA tests can run on
+# a dev machine; put it in user.bazelrc. It changes every CUDA action's command line, so those miss
+# the shared cache.
+build:sm86 --@rules_cuda//cuda:archs=compute_110:compute_110,sm_110;compute_86:sm_86
+
+# CUDA's host_defines.h rejects libc++ on x86_64 only (aarch64, i.e. Thor, has no such check). This
+# lets the AMD64 CI runner compile CUDA code; x86 CUDA binaries are not something we deploy.
+build --@rules_cuda//cuda:copts=-D_ALLOW_UNSUPPORTED_LIBCPP
+
+# libc++ 23 stopped including many headers transitively, and ROS code that never included what it
+# uses (fastdds, rclcpp, rosidl, tf2_ros, pcl, ...) no longer compiles. This restores those includes.
+# libc++ drops the macro in LLVM 24, so upstream fixes have to land before the llvm module moves again.
+build --cxxopt=-D_LIBCPP_KEEP_TRANSITIVE_INCLUDES_LLVM23
+build --host_cxxopt=-D_LIBCPP_KEEP_TRANSITIVE_INCLUDES_LLVM23
+
+# The llvm module assembles clang's link-time resource directory with bazel_lib's copy_to_directory,
+# passing the compiler's builtin-header directory (lib/clang/NN) as a source directory. The Linux
+# sandbox stages that directory as a symlink, which copy_to_directory doesn't follow, so the result
+# lacks include/ (stddef.h, ...). Bazel's own compiles never notice, but rules_foreign_cc compiles and
+# links in one clang call, where the link directory wins, and every configure script then fails with
+# "cannot run C compiled programs". Running just these copies unsandboxed produces the full directory.
+build --modify_execution_info=CopyToDirectory=+no-sandbox
+
+# Machine-local overrides; the file is gitignored and optional.
+try-import %workspace%/user.bazelrc

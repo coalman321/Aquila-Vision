@@ -1,0 +1,92 @@
+load("@rosidl_default_generators//:defs.bzl", "ros_message")
+load("//interfaces:defs.bzl", "interface_definitions")
+
+package(default_visibility = ["//visibility:public"])
+
+ros_message(
+    name = "GnssFix",
+    src = "GnssFix.msg",
+    package = "localization_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+        "@sensor_msgs//msg:NavSatStatus",
+        "@geometry_msgs//msg:Quaternion",
+    ],
+)
+
+ros_message(
+    name = "GraphConnection",
+    src = "GraphConnection.msg",
+    package = "localization_msgs",
+)
+
+ros_message(
+    name = "GraphNode",
+    src = "GraphNode.msg",
+    package = "localization_msgs",
+    deps = [
+        "@geometry_msgs//msg:Pose",
+    ],
+)
+
+ros_message(
+    name = "GraphState",
+    src = "GraphState.msg",
+    package = "localization_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+        ":GraphNode",
+        ":GraphConnection",
+    ],
+)
+
+ros_message(
+    name = "ImuBias",
+    src = "ImuBias.msg",
+    package = "localization_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+    ],
+)
+
+ros_message(
+    name = "OdometryScale",
+    src = "OdometryScale.msg",
+    package = "localization_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+    ],
+)
+
+ros_message(
+    name = "RtcmCorrection",
+    src = "RtcmCorrection.msg",
+    package = "localization_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+    ],
+)
+
+ros_message(
+    name = "SiteOrigin",
+    src = "SiteOrigin.msg",
+    package = "localization_msgs",
+)
+
+ros_message(
+    name = "TagSolution",
+    src = "TagSolution.msg",
+    package = "localization_msgs",
+    deps = [
+        "@std_msgs//msg:Header",
+        "@geometry_msgs//msg:Pose",
+    ],
+)
+
+ros_message(
+    name = "TerrainCell",
+    src = "TerrainCell.msg",
+    package = "localization_msgs",
+)
+
+interface_definitions(kind = "msg")

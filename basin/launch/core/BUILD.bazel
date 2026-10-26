@@ -1,0 +1,204 @@
+load("@aspect_rules_py//py:defs.bzl", "py_test")
+load("@rosdistro//ament:defs.bzl", "ament_index")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library", "cc_test")
+load("//basin/launch:defs.bzl", "python_env_binary", "python_env_test")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "launch_msgs",
+    deps = [
+        "//interfaces/process_msgs/msg:ProcessHeartbeat",
+        "//interfaces/process_msgs/msg:ProcessInfo",
+        "//interfaces/process_msgs/msg:ProcessList",
+        "//interfaces/process_msgs/msg:SystemInfo",
+        "//interfaces/process_msgs/srv:RemoteRequest",
+    ],
+)
+
+# Links against the same hermetic CPython that runs the launcher (see `python.toolchain`
+# in MODULE.bazel). Deliberately a cc_import rather than @rules_python//python/cc:
+# current_py_cc_libs, which provides the same library as a plain cc_library `.so` input:
+# a cc_binary/cc_test with `dynamic_deps` (as every consumer here needs -- see
+# DYNAMIC_DEPENDENCIES below) silently drops those, and the link then fails with
+# hundreds of undefined `Py*` symbols. A cc_import isn't dropped. The library named
+# here has to match the python.toolchain version in MODULE.bazel; nothing else does
+# (LaunchInterpreter finds the loaded libpython at runtime instead of by name).
+cc_import(
+    name = "libpython",
+    shared_library = ":libpython_so",
+)
+
+# The interpreter's own libpython, one per CPU that CI/dev machines build on.
+filegroup(
+    name = "libpython_so",
+    srcs = select({
+        "@platforms//cpu:aarch64": ["@python_3_12_aarch64-unknown-linux-gnu//:lib/libpython3.12.so.1.0"],
+        "@platforms//cpu:x86_64": ["@python_3_12_x86_64-unknown-linux-gnu//:lib/libpython3.12.so.1.0"],
+    }),
+)
+
+# pybind11's embedding support (`pybind11/embed.h`) is header-only; the only thing
+# @pybind11//:pybind11 doesn't already give us that CMake's `pybind11::embed` did is a
+# link against libpython itself.
+cc_library(
+    name = "pybind11_embed",
+    deps = [
+        ":libpython",
+        "@pybind11//:pybind11",
+    ],
+)
+
+# The launch node links rclcpp (directly and via //basin/core/node_core), a cc_shared_library
+# target, so every consumer needs the same dynamic_deps wiring. LaunchNode
+# extends plain NodeCore, not DeterministicNode, so unlike e.g. //basin/logging/continuous_logger
+# it never touches node_core's rosbag2 pieces (:node_core_determinism) -- see the comment on
+# NODE_CORE_DYNAMIC_DEPENDENCIES in //basin/core/node_core/BUILD.bazel.
+DYNAMIC_DEPENDENCIES = {
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+cc_library(
+    name = "launch_node",
+    srcs = [
+        "include/launch_core/launch_node_params.hpp",
+        "src/controlled_process.cpp",
+        "src/launch_interpreter.cpp",
+        "src/launch_node.cpp",
+    ],
+    hdrs = [
+        "include/launch_core/controlled_process.hpp",
+        "include/launch_core/launch_interpreter.hpp",
+        "include/launch_core/launch_node.hpp",
+    ],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":launch_msgs",
+        ":pybind11_embed",
+        "//basin/core/node_core",
+        "//basin/core/process_lib",
+        "@ament_index_cpp//:ament_index_cpp_library",
+    ],
+)
+
+# Runtime data shared by every consumer: the Python API's own ament share directory (so
+# the default launch_package/launch_file parameters resolve). The Python packages the
+# embedded interpreter imports come from the launcher's deps, not from here -- see
+# //basin/launch:python_env_exec.py.tpl.
+LAUNCH_DATA = ["//basin/launch/api:ament_index"]
+
+# The bare binary underlying :launch_node_exe below.
+cc_binary(
+    name = "launch_node_bin",
+    srcs = ["src/launch_node_main.cpp"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":launch_node",
+    ],
+)
+
+# The launch node: `bazel run //basin/launch/core:launch_node_exe -- --ros-args -p launch_file:=...
+# -p launch_package:=...` (see include/launch_core/launch_node_params.hpp for the rest of the
+# node's own parameters). LaunchNode embeds a CPython interpreter (see the :libpython/
+# :pybind11_embed comments above) that imports launch_api's Python packages at runtime, so the
+# binary runs under python_env_binary, which hands it the launcher's Python environment.
+python_env_binary(
+    name = "launch_node_exe",
+    exe = ":launch_node_bin",
+    data = LAUNCH_DATA,
+    deps = ["//basin/launch/api:launch_api"],
+)
+
+# The interpreter tests load the example launch files from //basin/launch/api,
+# which reference demo_nodes_cpp's talker/listener as child processes. Node() (Python)
+# only checks that `<prefix>/lib/<package>/<executable>` exists as a file -- nothing in
+# these tests ever runs it -- so publish stub executables of those names under a
+# demo_nodes_cpp ament_index. (The real @demo_nodes_cpp has no such executables: RCR only
+# builds its nodes as components, loaded through a component_container.)
+genrule(
+    name = "demo_nodes_cpp_stubs",
+    outs = [
+        "test_fixtures/listener",
+        "test_fixtures/talker",
+    ],
+    cmd = "for f in $(OUTS); do printf '#!/bin/sh\\n' > $$f; chmod +x $$f; done",
+    testonly = True,
+)
+
+ament_index(
+    name = "demo_nodes_cpp_ament_index",
+    export_name = "demo_nodes_cpp",
+    lib_data = [":demo_nodes_cpp_stubs"],
+    testonly = True,
+)
+
+# test/runner.cpp provides its own main(), so link plain gtest. Tagged manual, since
+# it has to run through :launch_test below to get a working Python
+# environment.
+cc_test(
+    name = "launch_test_bin",
+    size = "small",
+    srcs = [
+        "test/runner.cpp",
+        "test/test_controlled_process.cpp",
+        "test/test_launch_interpreter.cpp",
+    ],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    tags = ["manual"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":launch_node",
+        "//basin/core/process_lib",
+        "@googletest//:gtest",
+    ],
+)
+
+python_env_test(
+    name = "launch_test",
+    size = "small",
+    exe = ":launch_test_bin",
+    data = LAUNCH_DATA + [":demo_nodes_cpp_ament_index"],
+    deps = ["//basin/launch/api:launch_api"],
+)
+
+# Runs :launch_node_exe as deployed against a stub launch file, and checks the node starts its child
+# and takes it down again on shutdown. Everything else above tests :launch_node linked directly into
+# a gtest binary, which never exercises the launcher's Python environment.
+py_test(
+    name = "launch_node_test",
+    size = "small",
+    srcs = ["test/test_launch_node.py"],
+    main = "test/test_launch_node.py",
+    data = [
+        "test/sleeper.prod.py",
+        ":launch_node_exe",
+    ],
+    deps = [
+        "//tools/ros_test_domain",
+        "@rules_python//python/runfiles",
+    ],
+)

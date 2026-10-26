@@ -1,0 +1,388 @@
+module(
+    name = "aquila",
+)
+
+# BCR dependencies needed to bootstrap the hermetic toolchain and Python
+# support that every ROS package built from the RCR relies on.
+bazel_dep(name = "llvm", version = "0.8.23")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "rules_python", version = "2.2.0")
+
+# rmw_zenoh_cpp (one of the RMW middleware implementations pulled in
+# transitively by ros_core) is written in Rust, so a Rust toolchain must be
+# registered even for a C++-only workspace like this one. Version pinned to
+# match what RCR's own "lyrical.2026-06-08.rcr.1" release is built/tested
+# against (newer rules_rs releases change the rust_cdylib_library provider
+# API in a way that breaks the zenoh-c module's BUILD.bazel as shipped in
+# this RCR release).
+bazel_dep(name = "rules_rs", version = "0.0.93")
+bazel_dep(name = "rules_rust", version = "0.71.3")
+
+# rules_rs 0.0.93's hermetic rustc toolchain rule fetches a zlib1g .deb
+# (ubuntu2.1) from the Ubuntu archive pool, which only keeps the latest
+# build of each package and so drops it on every security update. Patch it
+# to the ubuntu2.2 sha256 that rules_rs itself switched to as of v0.0.109,
+# rather than bumping rules_rs (see comment above), but fetch it from
+# Launchpad, which keeps every published build, so the URL stays valid
+# after the pool moves on.
+single_version_override(
+    module_name = "rules_rs",
+    patch_strip = 1,
+    patches = ["//patches:rules_rs_zlib_1.3.dfsg-3.1ubuntu2.2.patch"],
+    version = "0.0.93",
+)
+
+# RCR: pull in the minimal ROS 2 "core" variant (rclcpp, rclpy, std_msgs,
+# rosidl codegen, ...) for the "lyrical/2026-06-08" release. See
+# https://github.com/intrinsic-opensource/ros-central-registry for other
+# variants (ros_base, desktop, desktop_full, perception, simulation).
+bazel_dep(name = "ros_core", version = "lyrical.2026-06-08.rcr.1")
+
+# Make these packages directly usable from this workspace. "0.0.0" is a
+# placeholder: Bazel's Minimal Version Selection resolves it to whatever
+# version "ros_core" actually pulls in transitively.
+#   see: https://github.com/bazelbuild/bazel/issues/28881
+# rosdistro rcr.3 (below) locks numpy 2.x, whose headers moved from numpy/core/include to
+# numpy/_core/include; only rosidl_generator_py's rcr.2 looks in both, so every generated Python
+# message extension fails to compile ("numpy/ndarrayobject.h not found") with the rcr.1 it
+# otherwise resolves to.
+bazel_dep(name = "rosidl_generator_py", version = "0.27.2-3.rcr.2")
+
+# rclcpp rcr.2 rather than "0.0.0":rosx_introspection rcr.2 includes rclcpp/version.h, which
+# rclcpp's rcr.1 overlay doesn't generate (same upstream 32.0.0-1 source, newer Bazel overlay).
+bazel_dep(name = "rclcpp", version = "32.0.0-1.rcr.2")
+bazel_dep(name = "rclpy", version = "0.0.0")
+
+# A real version rather than "0.0.0": foxglove_bridge's rcr.2 BUILD.bazel needs
+# @rosdistro//cc:foxglove_sdk, which first appears in rosdistro's rcr.3, although that module's
+# own MODULE.bazel still declares rcr.1 (which ros_core also pins). This raises the resolved
+# rosdistro for the whole workspace, not just for foxglove_bridge.
+bazel_dep(name = "rosdistro", version = "lyrical.2026-06-08.rcr.3")
+bazel_dep(name = "rosidl_core_generators", version = "0.0.0")
+bazel_dep(name = "rosidl_default_generators", version = "0.0.0")
+bazel_dep(name = "std_msgs", version = "0.0.0")
+
+# Referenced by //interfaces/... (this team's ROS 2 message/service
+# definitions, vendored from the now-superseded basin-interfaces repo).
+bazel_dep(name = "builtin_interfaces", version = "0.0.0")
+bazel_dep(name = "geometry_msgs", version = "0.0.0")
+bazel_dep(name = "sensor_msgs", version = "0.0.0")
+
+# Referenced by //basin/core/... (this team's ROS 2 libraries/nodes,
+# vendored from the now-superseded basin-core repo).
+bazel_dep(name = "rcl_interfaces", version = "0.0.0")
+
+# Not transitively pulled in by ros_core (only common in "base"+ variants),
+# so these need real pinned versions rather than the "0.0.0" MVS trick.
+bazel_dep(name = "rclcpp_components", version = "32.0.0-1.rcr.1")
+bazel_dep(name = "rosbag2_cpp", version = "0.33.3-1.rcr.1")
+bazel_dep(name = "rosbag2_storage", version = "0.33.3-1.rcr.1")
+
+# rosbag2_cpp/rosbag2_storage only provide the abstract reader/writer API;
+# actually opening a bag at runtime needs a concrete storage plugin
+# (sqlite3/mcap), discovered via an ament_index resource each plugin
+# registers. Without this, anything that opens a rosbag2 (e.g.
+# //basin/core/node_core's ReplayHarness/Writer) fails at runtime with
+# "Unable to create class load instance: package 'rosbag2_storage' not
+# found", even though it links and compiles fine.
+bazel_dep(name = "rosbag2_storage_default_plugins", version = "0.33.3-1.rcr.1")
+
+# Referenced by //basin/drivers/sbg_driver (static transforms for GNSS
+# antenna lever arms) and the velodyne-ros2 packages below. Also not
+# transitively pulled in by ros_core.
+bazel_dep(name = "tf2", version = "0.45.7-3.rcr.1")
+bazel_dep(name = "tf2_ros", version = "0.45.7-3.rcr.1")
+
+# Referenced by //camera_app/camera_webserver (tf2::toMsg for quaternions). Same geometry2 release as
+# tf2 above; not transitively pulled in by ros_core.
+bazel_dep(name = "tf2_geometry_msgs", version = "0.45.7-3.rcr.1")
+
+# Referenced by foxglove_bridge, which describes /tf_static (tf2_msgs/TFMessage) from this
+# package's ament index. Already in the graph as a dependency of tf2_ros, at this version.
+bazel_dep(name = "tf2_msgs", version = "0.45.7-3.rcr.1")
+
+# Referenced by //perception/apriltag_detector/landmark_detector_ros: its camera subscription and
+# debug image publisher (image_transport), the mono8/bgr8 conversions to OpenCV (cv_bridge) and its
+# Detection3DArray output (vision_msgs). None is transitively pulled in by ros_core.
+bazel_dep(name = "cv_bridge", version = "4.1.0-3.rcr.1")
+bazel_dep(name = "image_transport", version = "6.4.9-1.rcr.1")
+bazel_dep(name = "vision_msgs", version = "4.2.0-3.rcr.1")
+
+# Referenced by //perception/yolo_detector/object_detector_ros, which rectifies each frame with
+# image_geometry's PinholeCameraModel before running YOLO on it. Same vision_opencv release as
+# cv_bridge above; not transitively pulled in by ros_core.
+bazel_dep(name = "image_geometry", version = "4.1.0-3.rcr.1")
+
+# Referenced by //basin/drivers/velodyne-ros2/... (vendored from the
+# upstream ros-drivers/velodyne repo -- see that tree's own LICENSE/COPYING).
+# angles isn't transitively pulled in by anything else in this graph, so (like
+# tf2/rclcpp_components/rosbag2 above) it needs a real pinned version -- the
+# "0.0.0" placeholder trick only works when some other dependency already
+# provides a real version to dominate it via MVS.
+bazel_dep(name = "angles", version = "1.16.1-3.rcr.1")
+
+# A real version rather than "0.0.0": rosx_introspection rcr.2 (a foxglove_bridge dependency)
+# includes ament_index_cpp/version.h, which only ament_index_cpp's rcr.2 generates, though that
+# module's own MODULE.bazel still declares rcr.1.
+bazel_dep(name = "ament_index_cpp", version = "1.13.3-3.rcr.2")
+
+# ...and ament_index_cpp rcr.2's BUILD.bazel loads generate_version_h from
+# ament_cmake_gen_version_h, which only defines it from rcr.2 (again, not what ament_index_cpp's
+# own MODULE.bazel declares).
+bazel_dep(name = "ament_cmake_gen_version_h", version = "2.8.7-3.rcr.2")
+
+# Only so .bazelrc can set --@pcl//:pcl_silence_malloc_warning (the velodyne
+# packages reach PCL via @rosdistro//cc:pcl_common). Comes from the BCR rather
+# than RCR, so it needs the real version rosdistro pins, not "0.0.0".
+bazel_dep(name = "pcl", version = "1.15.1.bcr.3")
+
+# Referenced by //tools/ros2_launch (a `ros2 launch` equivalent -- see that
+# target's comment for why it's needed). Directly pulled in by ros_core.
+bazel_dep(name = "ros2launch", version = "0.0.0")
+
+# launch_ros (a ros2launch dependency) imports lifecycle_msgs.srv at runtime but doesn't
+# declare it as a bazel_dep of its own py_library -- see the deps comment on
+# //tools/ros2_launch's py_binary for the workaround. rclcpp_lifecycle (pulled in by
+# ros_core) already provides a real pinned version, so "0.0.0" resolves correctly here.
+bazel_dep(name = "lifecycle_msgs", version = "0.0.0")
+
+# py_binary rule used by //tools/ros2_launch: RCR's Python packages use
+# namespaced packages and a sitecustomize that rules_python's own py_binary
+# doesn't support -- aspect_rules_py is required (see RCR's examples/BUILD.bazel
+# comment on its own py_binary usage).
+bazel_dep(name = "aspect_rules_py", version = "1.11.7")
+
+# libpcap (raw packet capture, used by velodyne_driver to read LIDAR UDP
+# packets) directly from the BCR: not proxied through rosdistro.
+bazel_dep(name = "libpcap", version = "1.10.5.bcr.3")
+
+# tcpdump, bundled with //basin/logging/pcap_recorder (which runs it as a child process) so it
+# ships in the //basin tarball instead of being needed on the host. It builds against the
+# libpcap above, so the parser patch below covers it too.
+bazel_dep(name = "tcpdump", version = "4.99.6")
+
+# libpcap's BCR build generates its grammar/scanner via bison/flex, both of
+# which need m4 -- and building m4 from source fails for Bazel's exec/
+# host-tool platform here: one of its generated gnulib headers assumes glibc
+# headers are on the exec-platform sysroot search path the way they are for
+# the target platform, and they aren't (a rules_cc_autoconf /
+# hermetic-toolchain interaction bug, unrelated to libpcap itself). Patched
+# to use grammar.c/grammar.h/scanner.c/scanner.h pre-generated with bison
+# 3.8.2 / flex 2.6.4 (the same versions and args the BCR build would have
+# used) instead of regenerating them at build time.
+single_version_override(
+    module_name = "libpcap",
+    patch_strip = 2,
+    patches = ["//patches:libpcap_pregenerate_parser.patch"],
+    version = "1.10.5.bcr.3",
+)
+
+# BCR: googletest (pinned to the same version ros_core itself depends on)
+# and GeographicLib (used by //basin/core/site_lib for UTM projection math; not
+# available through RCR/rosdistro's proxied third-party libs).
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2")
+bazel_dep(name = "geographiclib", version = "2.4.0.bcr.2")
+
+# nlohmann_json (used by //basin/core/node_core's StateArchive) directly from the
+# BCR rather than through rosdistro's proxy: rosdistro only gained a
+# nlohmann_json alias in later "lyrical.2026-06-08.rcr.*" patches than the
+# rcr.1 this workspace's ros_core variant is pinned to.
+bazel_dep(name = "nlohmann_json", version = "3.12.0.bcr.2")
+
+# protobuf, pinned to the version already in the graph through the RCR modules.
+bazel_dep(name = "protobuf", version = "35.1")
+
+# The HTTP server behind //basin/web/web_core's WebNode (header-only). Its BCR target lists
+# boringssl and zlib as deps but only turns on TLS/compression support through local_defines, which
+# a header-only library never applies to its consumers, so web_core gets plain HTTP (BoringSSL is
+# still compiled for it, and this version's requirement raises the resolved boringssl; nothing is
+# linked from either). See ADDING_NEW_CONTENT.md.
+bazel_dep(name = "cpp-httplib", version = "0.46.0")
+
+# Named by an app's ament_index, which publishes the shared libraries its executables link into lib/
+# for the tarball (needed by foxglove_bridge). Transitive dependencies; "0.0.0" resolves to the version already in the graph.
+bazel_dep(name = "message_filters", version = "0.0.0")
+bazel_dep(name = "rcl_action", version = "0.0.0")
+bazel_dep(name = "rclcpp_action", version = "0.0.0")
+
+# Referenced by apps (streams ROS topics to Foxglove Studio over a websocket). From RCR, not
+# built from source; not part of ros_core, so like tf2/rosbag2 above it needs a real pinned
+# version. rcr.2 is the first release that builds (rcr.0/rcr.1 are metadata only), but it needs
+# newer versions of several packages than its MODULE.bazel declares: see the notes on rosdistro,
+# rclcpp, ament_index_cpp, ament_cmake_gen_version_h, rosidl_generator_py and rosx_introspection.
+bazel_dep(name = "foxglove_bridge", version = "3.4.1-1.rcr.2")
+
+# foxglove_bridge's MODULE.bazel declares rosx_introspection 2.3.0-3.rcr.1, which is a metadata-only
+# release (no library targets); rcr.2 is the first one that builds, so raise it here.
+bazel_dep(name = "rosx_introspection", version = "2.3.0-3.rcr.2")
+
+# GStreamer 1.28 with WebRTC, built from source by the workshop registry's gstreamer module, for
+# //basin/web/webrtc_streamer. It brings its own patched rules_foreign_cc (0.15.1.workshop.1), so
+# nothing here may pull in or override another rules_foreign_cc version.
+bazel_dep(name = "gstreamer", version = "1.28.7.workshop.1")
+
+# The S3 client and tar.gz writer behind //data_pipe/data_uploader/data_uploder_lib's DataUploader,
+# both directly from the BCR (the AWS SDK for C++ is published there as "aws_sdk", not
+# "aws-sdk-cpp"). The library only uses the SDK's S3 client, so it depends on @aws_sdk//:s3 rather
+# than the whole SDK.
+bazel_dep(name = "aws_sdk", version = "1.11.876.bcr.1")
+bazel_dep(name = "libarchive", version = "3.8.1.bcr.3")
+
+# Only so .bazelrc can set --@curl//:ssl_lib=openssl (see the comment there): a flag can only be
+# named through a module the root module depends on. Already in the graph via aws_sdk and
+# rosdistro, at the version pinned here.
+bazel_dep(name = "curl", version = "8.12.0")
+
+# linuxptp's ptp4l/phc2sys, which //basin/timesync:sync_node spawns as child processes, built
+# from source by the BCR module rather than expected on the host at /usr/sbin.
+bazel_dep(name = "linuxptp", version = "4.4")
+
+# Referenced by //basin/launch/api, which evaluates
+# `.prod.py` launch descriptions with launch's python-launch-file loader and
+# resolves package paths with ament_index_python. Both directly pulled in by
+# ros_core, so "0.0.0" resolves via MVS.
+bazel_dep(name = "launch", version = "0.0.0")
+bazel_dep(name = "ament_index_python", version = "0.0.0")
+
+# Referenced by //basin/launch (vendored from the now-superseded
+# production-launch repo). launch_core embeds a CPython interpreter via
+# pybind11 to evaluate `.prod.py` launch descriptions; pybind11_bazel is the
+# BCR module that fetches pybind11 itself (there is no separate `pybind11`
+# module on the BCR at the version pybind11_bazel pins). Already resolved
+# transitively at this version -- see MODULE.bazel.lock.
+bazel_dep(name = "pybind11_bazel", version = "3.0.1")
+
+pybind11 = use_extension("@pybind11_bazel//:internal_configure.bzl", "internal_configure_extension")
+use_repo(pybind11, "pybind11")
+
+# Register the hermetic LLVM/Clang toolchain used to build every ROS
+# package (and this workspace's own code) from source.
+register_toolchains("@llvm//toolchain:all")
+
+# Hermetic CUDA toolchain (nvcc, cudart, CCCL, ...) for cuda_library targets, fetched from NVIDIA's
+# redistributable archives rather than a toolkit installed on the host. Pinned to a main commit: the
+# 0.3.0 release can only fetch x86_64 redistributables, and SBSA support, CUDA 13's renamed arches
+# (Thor is sm_110) and several clang-CUDA fixes landed after it.
+# The first patch gives clang the CUDA version: rules_cuda points --cuda-path at a directory with no
+# cuda.h, so clang can't tell it is compiling against CUDA 13.2 and falls back to a PTX version too old
+# for sm_110. The second passes the cc toolchain's flags before a target's copts rather than after, so
+# the toolchain's -std=c++17 doesn't override a cuda_library's -std=c++20.
+bazel_dep(name = "rules_cuda", version = "0.3.0")
+git_override(
+    module_name = "rules_cuda",
+    commit = "8dd68e7ade0c681d46eb659e662e9b4fe1e87013",
+    patch_strip = 1,
+    patches = [
+        "//patches:rules_cuda_clang_cuda_version.patch",
+        "//patches:rules_cuda_clang_copts_after_toolchain_flags.patch",
+    ],
+    remote = "https://github.com/bazel-contrib/rules_cuda.git",
+)
+
+# 13.2.1 is the CUDA that JetPack 7.2 ships on Jetson Thor, so binaries match the board's driver
+# and runtime exactly. CUDA 13 publishes no Tegra ("linux-aarch64") build: Thor uses the SBSA one,
+# which rules_cuda picks for aarch64 targets by default (@rules_cuda//cuda:aarch64=sbsa).
+# linux-x86_64 is for the AMD64 CI runner.
+cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+cuda.redist_json(
+    name = "cuda_redist",
+    platforms = [
+        "linux-sbsa",
+        "linux-x86_64",
+    ],
+    version = "13.2.1",
+)
+cuda.toolkit(name = "cuda")
+use_repo(cuda, "cuda")
+
+# CCCL (libcu++, CUB, Thrust) for CUDA code, used in place of the copy in the redistributables above.
+# CUDA 13.2 bundles CCCL 3.2, whose libcu++ marks some deduction guides __host__-only, and clang 23
+# rejects those outright. CCCL 3.4 fixed that, and NVIDIA supports newer CCCL on any CUDA 13 toolkit.
+# Depend on @cccl//:thrust, :cub or :libcudacxx, never on @cuda//:thrust/cub/libcudacxx: the two
+# copies must not both be on one include path.
+bazel_dep(name = "cccl", version = "3.4.2")
+
+# TensorRT for //perception, from NVIDIA's release tarballs (via the workshop registry's module):
+# 10.16.1 is the release built for CUDA 13.2, the version above. It fetches only the tarball for the
+# target CPU, but they are large (7.6 GB x86_64, 5.6 GB aarch64). Depend on //third_party/tensorrt,
+# which also publishes the libraries into a deployed tree's lib/.
+bazel_dep(name = "tensorrt", version = "10.16.1.11.workshop.1")
+
+# FRC 971's fork of the AprilTag 3 library, for //perception/apriltag_detector (the BCR and RCR
+# apriltag modules lack its quad_decode_index()/reconcile_detections() split).
+bazel_dep(name = "apriltag_frc971", version = "3.3.0")
+
+# SBG Systems' sbgECom, for //basin/drivers/sbg_driver.
+bazel_dep(name = "sbgecom", version = "5.8.935")
+
+# Lists the Basler cameras on the bus for //camera_app/camera_webserver (GigE Vision and USB3 Vision,
+# so no vendor SDK is needed). Built from source along with glib, libxml2 and libusb.
+bazel_dep(name = "aravis", version = "0.9.2-20251111063445-57983d013883")
+
+# Builds the //camera_app web frontend (SvelteKit + Vite) with a hermetic Node.js, installing the
+# npm packages in each web app's own pnpm-lock.yaml (one npm_translate_lock per app; there is no repo-wide
+# pnpm workspace). Regenerate an app's lock with `pnpm install --lockfile-only` in its directory after
+# editing its package.json. //basin/web/svelte_framework is plain source the apps compile in, not a package.
+bazel_dep(name = "aspect_rules_js", version = "3.5.1")
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "npm_camera_app",
+    npmrc = "//camera_app/camera-app:.npmrc",
+    pnpm_lock = "//camera_app/camera-app:pnpm-lock.yaml",
+    verify_node_modules_ignored = "//:.bazelignore",
+)
+
+# SvelteKit reads its own src/types/synthetic/*.md at build time, which rules_js's default exclusions
+# (all markdown) would leave out.
+npm.npm_exclude_package_contents(
+    package = "@sveltejs/kit",
+    presets = [],
+)
+use_repo(npm, "npm_camera_app")
+
+# Hermetic Python interpreter, used by rclpy and by rosidl code generation.
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.12",
+)
+
+# Exposed so //basin/launch/core can link libpython directly (see
+# the comment on :libpython there), one per CPU that CI/dev machines build on.
+use_repo(
+    python,
+    "python_3_12_aarch64-unknown-linux-gnu",
+    "python_3_12_x86_64-unknown-linux-gnu",
+)
+
+# Re-exposes the "pip_ros" pip hub that @rosdistro's own MODULE.bazel already populates
+# via this same pip.parse extension (module extensions accumulate tags from the whole
+# dependency graph, so this doesn't call pip.parse itself, just requests the resulting
+# repo be visible here too). Needed by //tools/ros2_launch, which depends directly on
+# the "packaging" wheel: launch_ros/utilities/plugin_support.py imports it at runtime
+# but @launch_ros//:launch_ros doesn't declare it as a dep.
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+use_repo(pip, "pip_ros")
+
+# Hermetic Rust toolchain, needed to build rmw_zenoh_cpp's zenoh-c dependency.
+rs_toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains")
+rs_toolchains.toolchain(
+    edition = "2021",
+    version = "1.93.0",
+)
+use_repo(rs_toolchains, "default_rust_toolchains")
+
+register_toolchains("@default_rust_toolchains//:all")
+
+# Generates compile_commands.json for clangd/clang-tidy IDE tooling. Dev-only
+# (not needed to build anything). Module name kept as "hedron_compile_commands"
+# for backwards compat; this is the actively maintained helly25 fork -- see
+# https://github.com/helly25/bazel-compile-commands-extractor.
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    commit = "078ba7675c05bea2666c92d9a8abe200d8547655",
+    remote = "https://github.com/helly25/bazel-compile-commands-extractor.git",
+)

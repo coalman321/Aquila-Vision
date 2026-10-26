@@ -1,0 +1,52 @@
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# log_writer.hpp exposes LogMetadata in its public API, so every consumer needs the generated
+# C++ (and typesupport) for it. SnapshotRequest and the status messages are only used by
+# //basin/logging/continuous_logger, but are bundled here so the whole package links a single copy
+# of each typesupport library rather than one per target.
+cc_ros_library(
+    name = "logging_msgs",
+    deps = [
+        "//interfaces/logging_msgs/msg:EventStatus",
+        "//interfaces/logging_msgs/msg:LogMetadata",
+        "//interfaces/logging_msgs/msg:LoggerStatus",
+        "//interfaces/logging_msgs/msg:SnapshotStatus",
+        "//interfaces/logging_msgs/srv:SnapshotRequest",
+    ],
+)
+
+# The library links rclcpp, rosbag2_cpp and rosbag2_storage, all cc_shared_library targets in
+# RCR, so any cc_binary/cc_test/cc_shared_library that pulls it in needs the same dynamic_deps
+# wiring -- see the comment on NODE_CORE_DYNAMIC_DEPENDENCIES in
+# //basin/core/node_core/BUILD.bazel. It's a plain cc_library here (CMake built it SHARED)
+# for the same reason node_core is: each consumer is its own deployable unit.
+#
+# It writes and reads MCAP (`storage_id = "mcap"`), so anything that actually opens a bag at
+# runtime also needs rosbag2_storage_default_plugins registered via ament_index -- see the
+# `data`/`dynamic_deps` of //basin/logging/continuous_logger:ament_index.
+cc_library(
+    name = "log_util",
+    srcs = [
+        "src/log_manager.cpp",
+        "src/log_writer.cpp",
+        "src/snapshot_extractor.cpp",
+        "src/snapshot_writer.cpp",
+    ],
+    hdrs = [
+        "include/basin/log_util/log_manager.hpp",
+        "include/basin/log_util/log_writer.hpp",
+        "include/basin/log_util/snapshot_extractor.hpp",
+        "include/basin/log_util/snapshot_writer.hpp",
+    ],
+    includes = ["include"],
+    deps = [
+        ":logging_msgs",
+        "@rclcpp//:rclcpp_library",
+        "@rosbag2_cpp//:rosbag2_cpp_library",
+        "@rosbag2_storage//:rosbag2_storage_library",
+        "@rosdistro//cc:yaml-cpp_library",
+    ],
+)

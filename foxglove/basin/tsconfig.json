@@ -1,0 +1,23 @@
+{
+  "extends": "create-foxglove-extension/tsconfig/tsconfig.json",
+
+  "include": ["./src/**/*"],
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "jsx": "react-jsx",
+
+    // Keep tsc from emitting .d.ts files the compiled extension doesn't need.
+    "composite": false,
+    "declaration": false,
+
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}

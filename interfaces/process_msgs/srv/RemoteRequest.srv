@@ -1,0 +1,33 @@
+# Request type to determine how to decode the rest of the request
+uint8 request_id
+
+uint8 REQUEST_NONE = 0 # used to initiate a call and response check
+uint8 REQUEST_START = 1 # used to start a process
+uint8 REQUEST_STOP = 2 # used to stop a process
+uint8 REQUEST_RESTART = 3 # used to restart a process
+uint8 REQUEST_LOAD_CONFIG = 4 # used to load a new configuration
+uint8 REQUEST_LAUNCH = 5 # used to start the entire launch
+uint8 REQUEST_SHUTDOWN = 6 # used to stop the entire launch
+uint8 REQUEST_HOTLOAD = 7 # used for hot-reloading the current launch config
+uint8 REQUEST_INVALID = 8 # used for checking the request ID
+
+# Corresponding argument value for the request ID
+uint64 id_argument
+
+# Corresponding argument for changing config scenarios
+string scenario_argument
+---
+
+# machine readable code for the response
+uint8 resp_code
+
+uint8 RESPONSE_OK = 0
+uint8 RESPONSE_REQ_INVALID = 1
+uint8 RESPONSE_INVALID_PROCESS_ID = 2
+uint8 RESPONSE_SYSTEM_ACTIVE = 3
+uint8 RESPONSE_SYSTEM_SHUTDOWN = 4
+uint8 RESPONSE_PROCESS_DEAD = 5
+uint8 RESPONSE_UNKNOWN_FAIL = 6
+
+# human readable response message
+string response_msg

@@ -1,0 +1,115 @@
+load("@aspect_rules_py//py:defs.bzl", "py_test")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# See //basin/core/node_core/BUILD.bazel for what these are.
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "webrtc_streamer_msgs",
+    deps = ["@sensor_msgs//msg:Image"],
+)
+
+# Same wiring as //basin/web/web_core, which this links (and through it node_core).
+DYNAMIC_DEPENDENCIES = {
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
+    "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+cc_library(
+    name = "webrtc_streamer_lib",
+    srcs = [
+        "src/webrtc_component.cpp",
+        "src/webrtc_server.cpp",
+    ],
+    hdrs = [
+        "include/basin/webrtc_streamer/webrtc_component.hpp",
+        "include/basin/webrtc_streamer/webrtc_server.hpp",
+        "include/basin/webrtc_streamer/webrtc_streamer_node.hpp",
+        "include/basin/webrtc_streamer/webrtc_streamer_params.hpp",
+    ],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":webrtc_streamer_msgs",
+        "//basin/core/node_core",
+        "//basin/web/web_core",
+        "@gstreamer//:gst_webrtc",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_binary(
+    name = "webrtc_streamer_node",
+    srcs = ["src/webrtc_streamer_node.cpp"],
+    # GStreamer's plugins are dlopen()ed, so they have to be in the runfiles; main() points
+    # GST_PLUGIN_PATH at them.
+    data = ["@gstreamer//:gst_plugins"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":webrtc_streamer_lib",
+        "@gstreamer//:bundled_plugins",
+    ],
+)
+
+# A fake camera on /debug_img for test_streamer.py; only needs rclcpp.
+cc_binary(
+    name = "image_publisher",
+    testonly = True,
+    srcs = ["test/image_publisher.cpp"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":webrtc_streamer_msgs",
+        "@rclcpp//:rclcpp_library",
+    ],
+)
+
+# The node against that camera and a browser-style offer from webrtcbin: it has to answer, which
+# needs the whole GStreamer WebRTC stack to work in the node's process.
+#
+# requires-network because the node only answers once ICE gathering completes, and libnice gathers
+# host candidates from the network interfaces, ignoring loopback. In the empty network namespace
+# that --sandbox_default_allow_network=false gives a sandboxed test (only "lo"), it finds none,
+# gathering never finishes, and the offer times out with "Timeout generating answer". Nothing leaves
+# the host: the test only talks to itself.
+py_test(
+    name = "streamer_test",
+    size = "small",
+    srcs = ["test/test_streamer.py"],
+    data = [
+        ":image_publisher",
+        ":webrtc_streamer_node",
+        "@gstreamer//:make_offer",
+    ],
+    env = {"MAKE_OFFER": "$(rlocationpath @gstreamer//:make_offer)"},
+    main = "test/test_streamer.py",
+    tags = ["requires-network"],
+    deps = [
+        "//tools/ros_test_domain",
+        "@rules_python//python/runfiles",
+    ],
+)

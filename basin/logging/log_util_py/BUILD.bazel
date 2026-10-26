@@ -1,0 +1,129 @@
+load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library", "py_test")
+load("@pip_ros//:requirements.bzl", "requirement")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# The bindings link //basin/logging/log_util, which links rclcpp, rosbag2_cpp and
+# rosbag2_storage -- all cc_shared_library targets -- so the extension needs the same
+# dynamic_deps wiring as any other consumer. See the comment on NODE_CORE_DYNAMIC_DEPENDENCIES
+# in //basin/core/node_core/BUILD.bazel. SnapshotExtractor/LogManager also open MCAP bags, so
+# the storage plugins are loaded too (see //basin/logging/continuous_logger:BUILD.bazel).
+DYNAMIC_DEPENDENCIES = {
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
+    "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
+    "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins": "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins_library",
+}
+
+# Not just a build-time concern: librcl runs the RMW identifier check as a static initializer, so
+# merely importing the module dlopen()s the RMW implementation named by RMW_IMPLEMENTATION
+# (see the preload in log_util_py/__init__.py). That library reaches lib/ through the
+# `data` of the *_library targets below, which a py_library doesn't inherit from the
+# cc_shared_library alone.
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+cc_library(
+    name = "bindings_library",
+    srcs = ["src/bindings.cpp"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        "//basin/logging/log_util",
+        "@pybind11",
+        "@rules_python//python/cc:current_py_cc_headers",
+    ],
+)
+
+# Built as a cc_shared_library, the way RCR builds rclpy's own extension, rather than with
+# pybind_extension. `shared_lib_name` puts the module at
+# log_util_py/_log_util_py.so, next to __init__.py, which does
+# `from ._log_util_py import ...` (CMake installed it into the same place).
+cc_shared_library(
+    name = "bindings",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+    exports_filter = [":bindings_library"],
+    shared_lib_name = "log_util_py/_log_util_py.so",
+    deps = [":bindings_library"],
+)
+
+# `imports = ["."]` makes `import log_util_py` resolve to the directory of that name
+# below this one, holding both the .py sources and the extension.
+py_library(
+    name = "log_util_py",
+    srcs = glob(["log_util_py/*.py"]),
+    data = [
+        ":bindings",
+        ":transitive_dynamic_deps",
+        "@rosbag2_cpp//:ament_index",
+        "@rosbag2_storage//:ament_index",
+    ] + DYNAMIC_DEPENDENCIES.values(),
+    imports = ["."],
+)
+
+# The tests marked skipif('/tmp/test_logs' missing) need a real log directory and are skipped
+# under Bazel's sandbox; the rest exercise the bindings themselves.
+py_test(
+    name = "test_bindings",
+    size = "small",
+    srcs = ["test/test_bindings.py"],
+    main = "test/test_bindings.py",
+    deps = [
+        ":log_util_py",
+        requirement("pytest"),
+    ],
+)
+
+# Builds the log directory it reads (the integration tests above need a real /tmp/test_logs that
+# the sandbox never has), so it covers the snapshot YAML round trip and MCAP scanning.
+py_test(
+    name = "test_snapshot_roundtrip",
+    size = "small",
+    srcs = ["test/test_snapshot_roundtrip.py"],
+    main = "test/test_snapshot_roundtrip.py",
+    deps = [
+        ":log_util_py",
+        requirement("pytest"),
+    ],
+)
+
+# Runs the real //basin/logging/continuous_logger:logger_node and reads what it wrote through the
+# bindings: the C++ writer and the Python reader on real MCAP data.
+py_test(
+    name = "test_logger_output",
+    size = "small",
+    srcs = ["test/test_logger_output.py"],
+    data = ["//basin/logging/continuous_logger:logger_node"],
+    main = "test/test_logger_output.py",
+    deps = [
+        "//tools/ros_test_domain",
+        ":log_util_py",
+        "@rules_python//python/runfiles",
+        requirement("pytest"),
+    ],
+)
+
+# The scripts under examples/, runnable as e.g.
+# `bazel run //basin/logging/log_util_py:query_snapshots -- list <log_dir>`.
+py_binary(
+    name = "query_snapshots",
+    srcs = ["examples/query_snapshots.py"],
+    main = "examples/query_snapshots.py",
+    deps = [":log_util_py"],
+)
+
+py_binary(
+    name = "simple_query",
+    srcs = ["examples/simple_query.py"],
+    main = "examples/simple_query.py",
+    deps = [":log_util_py"],
+)
+
+py_binary(
+    name = "comprehensive_demo",
+    srcs = ["examples/comprehensive_demo.py"],
+    main = "examples/comprehensive_demo.py",
+    deps = [":log_util_py"],
+)

@@ -1,0 +1,201 @@
+load("@rosdistro//ament:defs.bzl", "ament_index")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+# OpenCV is a cc_shared_library target; see //basin/core/node_core/BUILD.bazel.
+DYNAMIC_DEPENDENCIES = {
+    "@rosdistro//cc:opencv": "@rosdistro//cc:opencv_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+# TensorRT for the target CPU, from the workshop registry's tensorrt module (NVIDIA's release
+# tarballs), plus what a deployed tree needs. See MODULE.bazel.
+#
+# libnvinfer has no RUNPATH and Bazel gives it a solib directory of its own, so the builder resources
+# it dlopen()s while building an engine can't sit next to it. Publish them (and the libraries, for a
+# deployed tree) into the runfiles' lib/, which is on LD_LIBRARY_PATH for bazel run/test (see
+# .bazelrc) and in a basin release. Without them, building an engine crashes rather than failing
+# cleanly.
+ament_index(
+    name = "tensorrt_ament_index",
+    export_name = "tensorrt",
+    libraries = ["@tensorrt//:runtime_libraries"],
+)
+
+# The libraries themselves link against libstdc++ (the rest of the workspace uses libc++); its
+# C++ API is pure-virtual interfaces behind extern "C" factories, so no standard library types
+# cross between the two. libstdc++.so.6 comes from the host at runtime, as it does on Thor.
+cc_library(
+    name = "tensorrt",
+    data = [":tensorrt_ament_index"],
+    deps = ["@tensorrt"],
+)
+
+# Detection, plus the TensorRT plumbing (ONNX -> engine conversion, engine loading) every YOLO
+# variant shares.
+cc_library(
+    name = "detector_common",
+    srcs = [
+        "src/detection.cpp",
+        "src/detector_common.cpp",
+    ],
+    hdrs = [
+        "include/object_detector_lib/detection.hpp",
+        "include/object_detector_lib/detector_common.hpp",
+        "include/object_detector_lib/detector_impl.hpp",
+        "include/object_detector_lib/nvinfer_logger.hpp",
+    ],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":tensorrt",
+        "@rules_cuda//cuda:runtime",
+    ],
+)
+
+# The YOLOv8 detection and segmentation heads: pre/post-processing around a TensorRT engine, and the
+# kernel that assembles segmentation masks from the prototype masks.
+cuda_library(
+    name = "yolov8",
+    srcs = [
+        "src/kernels.cu",
+        "src/yolov8_detect.cu",
+        "src/yolov8_segment.cu",
+    ],
+    hdrs = [
+        "include/object_detector_lib/kernels.h",
+        "include/object_detector_lib/yolov8_detect.hpp",
+        "include/object_detector_lib/yolov8_segment.hpp",
+    ],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [":detector_common"],
+)
+
+# The RF-DETR detection and segmentation heads (RfDetrDetector, RfDetrSegmenter) and the
+# RfDetrBase they share: pre/post-processing around a TensorRT engine. Host code only (the
+# outputs need no kernel to decode), so a plain cc_library.
+cc_library(
+    name = "rfdetr",
+    srcs = [
+        "src/rfdetr_base.cpp",
+        "src/rfdetr_detect.cpp",
+        "src/rfdetr_segment.cpp",
+    ],
+    hdrs = [
+        "include/object_detector_lib/rfdetr_base.hpp",
+        "include/object_detector_lib/rfdetr_detect.hpp",
+        "include/object_detector_lib/rfdetr_segment.hpp",
+    ],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [":detector_common"],
+)
+
+# ObjectDetector, the entry point. Its header is free of CUDA and TensorRT, so consumers need
+# neither on their include path.
+cc_library(
+    name = "object_detector_lib",
+    srcs = ["src/detector.cpp"],
+    hdrs = ["include/object_detector_lib/detector.hpp"],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":detector_common",
+        ":rfdetr",
+        ":yolov8",
+    ],
+)
+
+# Runs a model on one image and writes it back out with the detections drawn on:
+# `bazel run //perception/trt_detector/object_detector_lib:detect_image -- model.onnx in.png out.png
+# [detect|segment] [yolov8|rfdetr]`
+# (paths relative to the runfiles directory, so pass absolute ones). A .onnx model is converted to a
+# .trt engine next to it on first use.
+cc_binary(
+    name = "detect_image",
+    srcs = ["src/detect_image.cpp"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = DYNAMIC_DEPENDENCIES.values() + [":object_detector_lib"],
+)
+
+# Runs without a GPU or TensorRT: nothing here gets as far as loading a model.
+cc_test(
+    name = "detector_test",
+    size = "small",
+    srcs = ["test/detector_test.cpp"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":object_detector_lib",
+        "@rosdistro//cc:googletest",
+    ],
+)
+
+# Loads the synthetic models in test/testdata (see make_test_models.py for what they emit) and checks
+# the detections exactly: box decoding, letterboxing, thresholds, NMS, segmentation masks and engine
+# caching. Skips unless there is a GPU the build has kernels for (see //tools/cuda_test).
+cc_test(
+    name = "detector_model_test",
+    size = "medium",
+    srcs = ["test/detector_model_test.cpp"],
+    data = [
+        "test/testdata/detect_3_classes.onnx",
+        "test/testdata/segment_2_classes.onnx",
+        "test/testdata/rfdetr_detect_4_classes.onnx",
+        "test/testdata/rfdetr_segment_2_classes.onnx",
+    ],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    env = {
+        "DETECT_MODEL": "$(rlocationpath test/testdata/detect_3_classes.onnx)",
+        "SEGMENT_MODEL": "$(rlocationpath test/testdata/segment_2_classes.onnx)",
+        "RFDETR_DETECT_MODEL": "$(rlocationpath test/testdata/rfdetr_detect_4_classes.onnx)",
+        "RFDETR_SEGMENT_MODEL": "$(rlocationpath test/testdata/rfdetr_segment_2_classes.onnx)",
+    },
+    tags = ["cuda"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":object_detector_lib",
+        "//tools/cuda_test:gpu_available",
+        "@rosdistro//cc:googletest",
+        "@rules_cc//cc/runfiles",
+    ],
+)
+
+# TensorRT smoke test, independent of the detector: builds, serializes, deserializes and runs a
+# one-layer network. Skips unless there is a GPU the build has kernels for (see //tools/cuda_test).
+cc_test(
+    name = "tensorrt_test",
+    size = "small",
+    srcs = ["test/tensorrt_test.cpp"],
+    tags = ["cuda"],
+    deps = [
+        ":tensorrt",
+        "//tools/cuda_test:gpu_available",
+        "@rosdistro//cc:googletest",
+        "@rules_cuda//cuda:runtime",
+    ],
+)

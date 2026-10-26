@@ -1,0 +1,35 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "process_lib",
+    srcs = [
+        "src/process_controller.cpp",
+        "src/process_monitor.cpp",
+        "src/system_monitor.cpp",
+    ],
+    hdrs = [
+        "include/process_lib/process_controller.hpp",
+        "include/process_lib/process_monitor.hpp",
+        "include/process_lib/system_monitor.hpp",
+    ],
+    includes = ["include"],
+)
+
+# test/runner.cpp provides its own main(), so link plain gtest (not
+# gtest_main / the "@rosdistro//cc:googletest" wrapper).
+cc_test(
+    name = "process_monitor_test",
+    size = "small",
+    srcs = [
+        "test/runner.cpp",
+        "test/test_process_controller.cpp",
+        "test/test_process_monitor.cpp",
+        "test/test_system_monitor.cpp",
+    ],
+    deps = [
+        ":process_lib",
+        "@googletest//:gtest",
+    ],
+)

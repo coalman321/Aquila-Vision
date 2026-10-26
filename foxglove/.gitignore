@@ -1,0 +1,4 @@
+# Per-extension build output (npm install / foxglove-extension build / package)
+node_modules/
+dist/
+*.foxe

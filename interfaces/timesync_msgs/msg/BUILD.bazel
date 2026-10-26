@@ -1,0 +1,15 @@
+load("@rosidl_default_generators//:defs.bzl", "ros_message")
+load("//interfaces:defs.bzl", "interface_definitions")
+
+package(default_visibility = ["//visibility:public"])
+
+ros_message(
+    name = "SyncStatus",
+    src = "SyncStatus.msg",
+    package = "timesync_msgs",
+    deps = [
+        "@builtin_interfaces//msg:Time",
+    ],
+)
+
+interface_definitions(kind = "msg")

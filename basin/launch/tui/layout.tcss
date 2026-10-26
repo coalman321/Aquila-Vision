@@ -1,0 +1,29 @@
+.launch_table{
+    height: 82%;
+    border: solid white;
+}
+
+.control_footer {
+    width: 1fr;
+    height: 18%;
+}
+
+.control_footer_item {
+    width: 1fr;
+    height: 100%;
+    content-align: left middle;
+    border: solid green;
+}
+
+.cmd_input {
+    width: 80%;
+    height: 100%;
+    content-align: left middle;
+}
+
+.cmd_label {
+    width: 20%;
+    height: 100%;
+    content-align: right middle;
+}
+

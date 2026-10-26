@@ -1,0 +1,15 @@
+--- a/cuda/private/toolchain_configs/clang.bzl
++++ b/cuda/private/toolchain_configs/clang.bzl
+@@ -642,9 +642,11 @@
+         default_compile_flags_feature,
+         dbg_feature,
+         opt_feature,
++        # Before the target's own copts/host_copts, as cc_library orders them, so a target can
++        # override a toolchain default (e.g. the cc toolchain's -std=c++17 with -std=c++20).
++        host_toolchain_flags_feature,
+         compile_flags_feature,
+         host_compile_flags_feature,
+-        host_toolchain_flags_feature,
+         cuda_host_use_copts_feature,
+         cuda_host_use_cxxopts_feature,
+         cuda_host_use_linkopts_feature,

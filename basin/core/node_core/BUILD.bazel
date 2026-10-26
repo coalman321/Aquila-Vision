@@ -1,0 +1,236 @@
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# RCR compiles with a dynamic RMW selection by default (rmw_implementation
+# is a cc_shared_library loaded at runtime via RMW_IMPLEMENTATION). These
+# mirror the pattern used across this workspace (see //nodes/BUILD.bazel)
+# so `--dynamic_mode=off --@rosdistro//:rmw=<impl>` can statically link a
+# specific middleware instead.
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "node_core_msgs",
+    deps = [
+        "//interfaces/process_msgs/msg:ProcessHeartbeat",
+        "//interfaces/status_msgs/msg:FaultReport",
+        "@rcl_interfaces//srv:SetParameters",
+    ],
+)
+
+# node_core itself links one RCR cc_shared_library target (rclcpp). Anything
+# that links node_core needs the same dynamic_deps wiring, since dynamic_deps
+# doesn't propagate through a plain cc_library -- see the
+# collect_transitive_dynamic_deps comment in RCR's own examples/BUILD.bazel.
+NODE_CORE_DYNAMIC_DEPENDENCIES = {
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = NODE_CORE_DYNAMIC_DEPENDENCIES.keys(),
+)
+
+cc_library(
+    name = "node_core",
+    srcs = [
+        "src/node_core.cpp",
+        "src/node_monitor.cpp",
+        "src/node_params.cpp",
+        "src/param_client.cpp",
+        "src/rate_monitor.cpp",
+    ],
+    hdrs = [
+        "include/basin/node_core/debouncer.hpp",
+        "include/basin/node_core/node_core.hpp",
+        "include/basin/node_core/node_monitor.hpp",
+        "include/basin/node_core/node_params.hpp",
+        "include/basin/node_core/param_client.hpp",
+        "include/basin/node_core/rate_monitor.hpp",
+    ],
+    includes = ["include"],
+    deps = NODE_CORE_DYNAMIC_DEPENDENCIES.values() + [
+        ":node_core_msgs",
+    ],
+)
+
+cc_ros_library(
+    name = "node_core_determinism_msgs",
+    deps = [
+        "//interfaces/process_msgs/msg:DispatchLogEntry",
+        "//interfaces/process_msgs/msg:PublishProvenance",
+        "//interfaces/process_msgs/msg:StateSnapshot",
+    ],
+)
+
+# DeterministicNode/DeterministicExecutor/ExecutionRecorder/ReplayHarness/StateArchive, split out
+# of :node_core because they're the only pieces that need rosbag2_cpp/rosbag2_storage (replaying a
+# recorded bag) and nlohmann_json (state snapshot (de)serialization). Most :node_core consumers
+# just want the plain NodeCore/NodeParams/NodeMonitor/RateMonitor/Debouncer and shouldn't have to
+# carry rosbag2's dynamic_deps wiring (ament_index data, storage plugin registration, etc) for
+# code they never call -- see //basin/launch/core/BUILD.bazel, which doesn't use determinism.
+NODE_CORE_DETERMINISM_DYNAMIC_DEPENDENCIES = dict(NODE_CORE_DYNAMIC_DEPENDENCIES)
+
+NODE_CORE_DETERMINISM_DYNAMIC_DEPENDENCIES["@rosbag2_cpp//:rosbag2_cpp"] = "@rosbag2_cpp//:rosbag2_cpp_library"
+NODE_CORE_DETERMINISM_DYNAMIC_DEPENDENCIES["@rosbag2_storage//:rosbag2_storage"] = "@rosbag2_storage//:rosbag2_storage_library"
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps_determinism",
+    dynamic_deps = NODE_CORE_DETERMINISM_DYNAMIC_DEPENDENCIES.keys(),
+)
+
+cc_library(
+    name = "node_core_determinism",
+    srcs = [
+        "src/determinism/deterministic_executor.cpp",
+        "src/determinism/deterministic_node.cpp",
+        "src/determinism/execution_recorder.cpp",
+        "src/determinism/replay_harness.cpp",
+    ],
+    hdrs = [
+        "include/basin/node_core/determinism/deterministic_executor.hpp",
+        "include/basin/node_core/determinism/deterministic_node.hpp",
+        "include/basin/node_core/determinism/deterministic_publisher.hpp",
+        "include/basin/node_core/determinism/execution_recorder.hpp",
+        "include/basin/node_core/determinism/replay_harness.hpp",
+        "include/basin/node_core/determinism/state_archive.hpp",
+        "include/basin/node_core/determinism/types.hpp",
+    ],
+    includes = ["include"],
+    deps = NODE_CORE_DETERMINISM_DYNAMIC_DEPENDENCIES.values() + [
+        ":node_core",
+        ":node_core_determinism_msgs",
+        "@nlohmann_json//:json",
+    ],
+)
+
+# basin_container additionally pulls in rclcpp_components (component_manager) and, so that any
+# DeterministicNode it hosts can actually read/write bags at runtime (see the comment on
+# DETERMINISM_TEST_DYNAMIC_DEPENDENCIES below), rosbag2_storage_default_plugins. It links
+# :node_core_determinism (not just :node_core) for the same reason, even though basin_container.cpp
+# itself only calls plain NodeParams -- the container has to carry rosbag2 for any DeterministicNode
+# component it dlopens.
+BASIN_CONTAINER_DYNAMIC_DEPENDENCIES = dict(NODE_CORE_DETERMINISM_DYNAMIC_DEPENDENCIES)
+
+BASIN_CONTAINER_DYNAMIC_DEPENDENCIES["@rclcpp_components//:component_manager"] = "@rclcpp_components//:component_manager_library"
+BASIN_CONTAINER_DYNAMIC_DEPENDENCIES["@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins"] = "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins_library"
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps_basin_container",
+    dynamic_deps = BASIN_CONTAINER_DYNAMIC_DEPENDENCIES.keys(),
+)
+
+cc_binary(
+    name = "basin_container",
+    srcs = ["src/basin_container.cpp"],
+    data = [
+        "@rosbag2_cpp//:ament_index",
+        "@rosbag2_storage//:ament_index",
+    ],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps_basin_container"],
+        "//conditions:default": [],
+    }),
+    deps = BASIN_CONTAINER_DYNAMIC_DEPENDENCIES.values() + [
+        ":node_core_determinism",
+    ],
+)
+
+# std_msgs/Int32 is only used by node_core's own tests (test_deterministic_subscription.cpp,
+# test_replay_harness.cpp), not by the library itself.
+cc_ros_library(
+    name = "node_core_test_msgs",
+    deps = ["@std_msgs//msg:Int32"],
+)
+
+# rosbag2_cpp/rosbag2_storage only provide the abstract reader/writer API;
+# actually opening a bag (as test_replay_harness.cpp and ReplayHarness's
+# other tests do) needs a concrete storage plugin registered via ament_index
+# at runtime, or it fails with "Unable to create class load instance:
+# package 'rosbag2_storage' not found" despite linking/compiling fine.
+# rosbag2_storage_default_plugins_library carries that registration as its
+# own `data`, which propagates into this test's runfiles once it's anywhere
+# in the dep graph.
+DETERMINISM_TEST_DYNAMIC_DEPENDENCIES = dict(NODE_CORE_DETERMINISM_DYNAMIC_DEPENDENCIES)
+
+DETERMINISM_TEST_DYNAMIC_DEPENDENCIES["@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins"] = "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins_library"
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps_determinism_test",
+    dynamic_deps = DETERMINISM_TEST_DYNAMIC_DEPENDENCIES.keys(),
+)
+
+# test/runner.cpp provides its own main() (and calls rclcpp::init/shutdown
+# around RUN_ALL_TESTS), so link plain gtest here.
+cc_test(
+    name = "node_core_determinism_test",
+    size = "small",
+    srcs = [
+        "test/pubsub_test_helpers.hpp",
+        "test/runner.cpp",
+        "test/test_deterministic_executor.cpp",
+        "test/test_deterministic_subscription.cpp",
+        "test/test_execution_recorder.cpp",
+        "test/test_node.hpp",
+        "test/test_replay_harness.cpp",
+        "test/test_state_archive.cpp",
+    ],
+    data = [
+        "@rosbag2_cpp//:ament_index",
+        "@rosbag2_storage//:ament_index",
+    ],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps_determinism_test"],
+        "//conditions:default": [],
+    }),
+    deps = DETERMINISM_TEST_DYNAMIC_DEPENDENCIES.values() + [
+        ":node_core_determinism",
+        ":node_core_test_msgs",
+        "@googletest//:gtest",
+    ],
+)
+
+# test_debouncer.cpp has no main() of its own, so it needs gtest_main --
+# pulled in by the "@rosdistro//cc:googletest" wrapper.
+cc_test(
+    name = "node_core_debouncer_test",
+    size = "small",
+    srcs = ["test/test_debouncer.cpp"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = NODE_CORE_DYNAMIC_DEPENDENCIES.values() + [
+        ":node_core",
+        "@rosdistro//cc:googletest",
+    ],
+)
+
+# test_rate_monitor.cpp has no main() of its own either.
+cc_test(
+    name = "node_core_rate_monitor_test",
+    size = "small",
+    srcs = ["test/test_rate_monitor.cpp"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = NODE_CORE_DYNAMIC_DEPENDENCIES.values() + [
+        ":node_core",
+        "@rosdistro//cc:googletest",
+    ],
+)

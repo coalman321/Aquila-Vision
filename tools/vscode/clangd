@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Runs the clangd shipped with the hermetic LLVM toolchain (@llvm//toolchain) instead of a host one.
+#
+# clangd has to match the clang that compile_commands.json was generated for: it parses with its own
+# version's frontend and builtin headers (lib/clang/<major>/include), so a clangd a major version
+# behind reports errors in code the real toolchain compiles fine. The toolchain repo's name carries
+# the host CPU, so resolve it here rather than hardcoding one arch into .vscode/settings.json.
+#
+# Requires at least one prior `bazel build` so bazel-Aquila-Vision/external holds the toolchain.
+set -euo pipefail
+
+workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+case "$(uname -m)" in
+    x86_64) cpu=amd64 ;;
+    aarch64 | arm64) cpu=arm64 ;;
+    *) echo "clangd wrapper: unsupported CPU $(uname -m)" >&2; exit 1 ;;
+esac
+
+clangd="${workspace}/bazel-Aquila-Vision/external/llvm++llvm_toolchain_minimal+llvm-toolchain-minimal-linux-${cpu}/bin/clangd"
+if [[ ! -x "${clangd}" ]]; then
+    echo "clangd wrapper: ${clangd} not found; run a bazel build first" >&2
+    exit 1
+fi
+
+exec "${clangd}" "$@"

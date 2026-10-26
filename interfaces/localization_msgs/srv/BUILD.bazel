@@ -1,0 +1,15 @@
+load("@rosidl_default_generators//:defs.bzl", "ros_service")
+load("//interfaces:defs.bzl", "interface_definitions")
+
+package(default_visibility = ["//visibility:public"])
+
+ros_service(
+    name = "TerrainQuery",
+    src = "TerrainQuery.srv",
+    package = "localization_msgs",
+    deps = [
+        "//interfaces/localization_msgs/msg:TerrainCell",
+    ],
+)
+
+interface_definitions(kind = "srv")

@@ -1,0 +1,31 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+load("@pip_ros//:requirements.bzl", "requirement")
+load("@rosdistro//ament:defs.bzl", "ament_index")
+
+package(default_visibility = ["//visibility:public"])
+
+# The Python side of the launch system: `.prod.py` launch descriptions are
+# evaluated by //basin/launch/core's embedded interpreter (see :launch_node in
+# //basin/launch/core), which imports this package by name.
+py_library(
+    name = "launch_api",
+    srcs = glob(["launch_api/**/*.py"]),
+    imports = ["."],
+    deps = [
+        "@ament_index_python//:ament_index_python",
+        "@launch//:launch",
+        requirement("pyyaml"),
+    ],
+)
+
+# Registers launch/ under this package's own ament_index share directory
+# (share/launch_api/launch/...), which is where both
+# LoadDescription (Python) and LaunchInterpreter (C++) look up a
+# (package, launch_file) pair -- see the basin-core section of
+# //:ADDING_NEW_CONTENT.md for why that's needed in a Bazel build.
+ament_index(
+    name = "ament_index",
+    data = glob(["launch/**"]),
+    data_strip_prefix = "basin/launch/api",
+    export_name = "launch_api",
+)

@@ -1,0 +1,89 @@
+load("@rosdistro//ament:defs.bzl", "ament_index")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "timesync_ros_msgs",
+    deps = ["//interfaces/timesync_msgs/msg:SyncStatus"],
+)
+
+# sync_node links //basin/core/node_core, which itself links rclcpp, rosbag2_cpp, and
+# rosbag2_storage (all cc_shared_library targets) -- see the comment on
+# NODE_CORE_DYNAMIC_DEPENDENCIES in //basin/core/node_core/BUILD.bazel for why every consumer
+# needs to repeat this dynamic_deps wiring.
+DYNAMIC_DEPENDENCIES = {
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
+    "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+# Spawns ptp4l/phc2sys and publishes the sync state. The node only launches them by path
+# (SyncNodeParams defaults to the host's /usr/sbin); `args` instead points it at the hermetic
+# @linuxptp build. `bazel run` starts the binary in <binary>.runfiles/_main, where external repos
+# are siblings, hence the "../" -- these are only defaults, so a later
+# `-p ptp4l_path:=/usr/sbin/ptp4l` still wins.
+# `bazel run //basin/timesync:sync_node -- --ros-args -p is_grandmaster:=true -p interfaces:="[eth0]"`
+cc_binary(
+    name = "sync_node",
+    srcs = [
+        "include/timesync_ros/sync_node.hpp",
+        "include/timesync_ros/sync_node_params.hpp",
+        "src/sync_node.cpp",
+    ],
+    args = [
+        "--ros-args",
+        "-p",
+        "ptp4l_path:=../$(rlocationpath @linuxptp//:ptp4l)",
+        "-p",
+        "phc2sys_path:=../$(rlocationpath @linuxptp//:phc2sys)",
+    ],
+    data = [
+        "@linuxptp//:phc2sys",
+        "@linuxptp//:ptp4l",
+    ],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":timesync_ros_msgs",
+        "//basin/core/node_core",
+        "//basin/core/process_lib",
+    ],
+)
+
+# The Bazel counterpart of the original CMake `install(TARGETS sync_node DESTINATION
+# lib/timesync_ros)`: publishes the executable at lib/timesync_ros/sync_node, where a launch
+# description's Node(package="timesync_ros", executable="sync_node") looks for it (see the
+# basin-launch section of ADDING_NEW_CONTENT.md). ptp4l and phc2sys go alongside it, so a launch
+# description can point the node's ptp4l_path/phc2sys_path at lib/timesync_ros/ instead of relying
+# on a host install.
+ament_index(
+    name = "ament_index",
+    export_name = "timesync_ros",
+    lib_data = [
+        ":sync_node",
+        "@linuxptp//:phc2sys",
+        "@linuxptp//:ptp4l",
+    ],
+)

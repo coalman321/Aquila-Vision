@@ -1,0 +1,34 @@
+# Type of request being made
+uint8 request_id
+
+uint8 REQ_NONE = 0
+uint8 REQ_START_CAL = 1
+uint8 REQ_STOP_CAL = 2
+uint8 REQ_COMPLETE_CAL = 3
+
+# string for the topic to subscribe to
+string image_topic
+
+# string for the name of the camera
+string camera_name
+
+# Edge length between corners in m
+float32 edge_len
+
+---
+
+# Response error code
+uint8 err_code
+uint8 ERR_UNKNOWN = 0
+uint8 ERR_CAL_RUNNING = 1
+uint8 ERR_NO_CAL_RUNNING = 2
+uint8 ERR_NOT_READY = 3
+uint8 ERR_INVLD_EDGE_LEN = 4
+uint8 ERR_OK = 5
+
+string err_msg
+
+# This field is populated when a new calibration is started with some number other than INACTIVE_SESSION
+# This can be used to track if a calibration is currently active
+uint64 session_id
+uint64 INACTIVE_SESSION = 0

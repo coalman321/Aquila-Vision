@@ -1,0 +1,7 @@
+---
+uint8 resp_code
+
+uint8 RESPONSE_OK = 0      # command completed successfully
+uint8 RESPONSE_FAILED = 1  # command was attempted and failed -- see response_msg
+
+string response_msg

@@ -1,0 +1,11 @@
+load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+
+# For tests that run CUDA kernels: GpuAvailable() says whether this machine can actually run them,
+# so a test can skip instead of failing on a machine with no GPU, or with one the build has no
+# kernels for.
+cuda_library(
+    name = "gpu_available",
+    srcs = ["gpu_available.cu"],
+    hdrs = ["gpu_available.h"],
+    visibility = ["//visibility:public"],
+)

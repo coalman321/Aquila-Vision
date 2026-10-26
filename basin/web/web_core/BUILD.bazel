@@ -1,0 +1,159 @@
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# See //basin/core/node_core/BUILD.bazel for what these are.
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+# Every message the JSON layer (:json_serialization) and the routes built on it know how to
+# serialize. Header-only consumers only need the ones they name, but they all share this one
+# library.
+cc_ros_library(
+    name = "web_core_msgs",
+    deps = [
+        "//interfaces/logging_msgs/msg:LogMetadata",
+        "//interfaces/logging_msgs/srv:SnapshotRequest",
+        "//interfaces/process_msgs/msg:ProcessHeartbeat",
+        "//interfaces/process_msgs/msg:ProcessInfo",
+        "//interfaces/process_msgs/msg:ProcessList",
+        "//interfaces/process_msgs/msg:SystemInfo",
+        "//interfaces/process_msgs/srv:RemoteRequest",
+        "//interfaces/status_msgs/msg:FaultKey",
+        "//interfaces/status_msgs/msg:FaultReport",
+        "//interfaces/status_msgs/msg:KillswitchReport",
+        "//interfaces/status_msgs/msg:SafetyStatus",
+        "//interfaces/timesync_msgs/msg:SyncStatus",
+        "@builtin_interfaces//msg:Time",
+        "@rcl_interfaces//msg:ParameterDescriptor",
+        "@std_msgs//msg:Header",
+    ],
+)
+
+# WebNode links node_core, which links rclcpp, rosbag2_cpp and rosbag2_storage -- all
+# cc_shared_library targets -- so anything that links web_core needs the same dynamic_deps wiring
+# as node_core itself (dynamic_deps doesn't propagate through a plain cc_library).
+DYNAMIC_DEPENDENCIES = {
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
+    "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+# The HTTP server base class. cpp-httplib is part of WebNode's public interface
+# (`svr_`/`getServer()`), so it is a public dep; TLS and compression support are not enabled.
+cc_library(
+    name = "web_core",
+    srcs = ["src/web_node.cpp"],
+    hdrs = ["include/basin/web_core/web_node.hpp"],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        "//basin/core/node_core",
+        "@cpp-httplib//:httplib",
+    ],
+)
+
+cc_library(
+    name = "json_serialization",
+    srcs = ["src/json_serialization.cpp"],
+    hdrs = ["include/basin/web_core/json_serialization.hpp"],
+    includes = ["include"],
+    deps = [
+        ":web_core_msgs",
+        "@nlohmann_json//:json",
+    ],
+)
+
+# Header-only, and not used by anything in this package; kept for other packages' routes.
+cc_library(
+    name = "jsonable",
+    hdrs = ["include/basin/jsonable/pose3d.hpp"],
+    includes = ["include"],
+    deps = ["@nlohmann_json//:json"],
+)
+
+cc_library(
+    name = "launch_component",
+    srcs = ["src/launch_component.cpp"],
+    hdrs = ["include/basin/web_core/launch_component.hpp"],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":json_serialization",
+        ":web_core",
+        ":web_core_msgs",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "file_manager_component",
+    srcs = ["src/file_manager_component.cpp"],
+    hdrs = ["include/basin/web_core/file_manager_component.hpp"],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":web_core",
+        "@nlohmann_json//:json",
+    ],
+)
+
+cc_library(
+    name = "static_server_component",
+    srcs = ["src/static_server_component.cpp"],
+    hdrs = ["include/basin/web_core/static_server_component.hpp"],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [":web_core"],
+)
+
+cc_library(
+    name = "parameter_api_component",
+    srcs = ["src/parameter_api_component.cpp"],
+    hdrs = ["include/basin/web_core/parameter_api_component.hpp"],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":web_core",
+        ":web_core_msgs",
+        "@nlohmann_json//:json",
+    ],
+)
+
+# A WebNode with just a file-upload route on /upload (files land in /tmp/uploads):
+# `bazel run //basin/web/web_core:web_core_node`. Not a component, unlike SafetyAggNode and
+# friends -- it has its own main().
+cc_binary(
+    name = "web_core_node",
+    srcs = ["src/main.cpp"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":file_manager_component",
+        ":web_core",
+    ],
+)
+
+# test_json_serialization.cpp has no main() of its own, so it needs gtest_main -- pulled in by the
+# "@rosdistro//cc:googletest" wrapper.
+cc_test(
+    name = "json_serialization_test",
+    size = "small",
+    srcs = ["test/test_json_serialization.cpp"],
+    deps = [
+        ":json_serialization",
+        "@rosdistro//cc:googletest",
+    ],
+)

@@ -1,0 +1,5 @@
+load("//interfaces:defs.bzl", "interface_ament_index")
+
+package(default_visibility = ["//visibility:public"])
+
+interface_ament_index(subdirs = ["msg", "srv"])

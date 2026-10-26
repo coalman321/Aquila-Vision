@@ -1,0 +1,25 @@
+/**:
+  ros__parameters:
+    tcpdump:
+      path: ""            # "" = the tcpdump bundled with the node; or e.g. "/usr/bin/tcpdump"
+      interface: "any"
+      # BPF filter expression, passed to tcpdump as-is ("" captures everything)
+      filter: "not port 22"
+      snaplen: 262144     # bytes kept per packet (0 = tcpdump's default)
+      immediate_mode: false
+      # Further tcpdump arguments, placed before the filter, e.g. ["-n", "-p"]
+      extra_args: ["-n"]
+      restart_delay: 5.0  # seconds between attempts to restart tcpdump when it exits
+
+    buffer:
+      max_bytes: 67108864 # 64 MiB of packet records kept in memory
+      max_age: 30.0       # seconds; older packets are dropped (0 = only max_bytes limits the buffer)
+
+    capture:
+      duration: 10.0            # seconds of live traffic published after the trigger
+      max_message_bytes: 1048576
+      queue_depth: 100
+
+    trigger:
+      # "*", "<fault_system>/*" or "<fault_system>/<fault_name>"
+      faults: ["*"]

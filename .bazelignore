@@ -1,0 +1,3 @@
+# npm installs for the Foxglove extensions (see foxglove/README.md); Bazel would otherwise walk them for //...
+foxglove/basin/node_modules
+camera_app/camera-app/node_modules

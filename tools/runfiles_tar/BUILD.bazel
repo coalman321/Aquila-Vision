@@ -1,0 +1,30 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+load("@rules_python//python:py_binary.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "build_tar",
+    srcs = ["build_tar.py"],
+    main = "build_tar.py",
+)
+
+py_binary(
+    name = "strip_elf",
+    srcs = ["strip_elf.py"],
+    main = "strip_elf.py",
+)
+
+# Shared harness for an app's tarball_{release,debug}_test: unpacks a
+# runfiles_tar_pair archive and runs binaries from it the way a host would. See
+# tarball_test_lib.py's docstring.
+py_library(
+    name = "tarball_test_lib",
+    testonly = True,
+    srcs = ["tarball_test_lib.py"],
+    imports = ["."],
+    deps = [
+        "//tools/ros_test_domain",
+        "@rules_python//python/runfiles",
+    ],
+)

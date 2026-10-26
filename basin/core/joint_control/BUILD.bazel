@@ -1,0 +1,23 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "joint_control",
+    srcs = ["src/pid.cpp"],
+    hdrs = ["include/basin/joint_control/pid.hpp"],
+    includes = ["include"],
+)
+
+# test_pid.cpp has no main() of its own, so it needs gtest_main -- pulled in
+# by the "@rosdistro//cc:googletest" wrapper (gtest + gtest_main + a helper
+# that cleans up background DDS threads before exit).
+cc_test(
+    name = "test_pid",
+    size = "small",
+    srcs = ["test/test_pid.cpp"],
+    deps = [
+        ":joint_control",
+        "@rosdistro//cc:googletest",
+    ],
+)

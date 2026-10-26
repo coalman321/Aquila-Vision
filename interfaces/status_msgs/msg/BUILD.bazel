@@ -1,0 +1,38 @@
+load("@rosidl_default_generators//:defs.bzl", "ros_message")
+load("//interfaces:defs.bzl", "interface_definitions")
+
+package(default_visibility = ["//visibility:public"])
+
+ros_message(
+    name = "FaultKey",
+    src = "FaultKey.msg",
+    package = "status_msgs",
+)
+
+ros_message(
+    name = "FaultReport",
+    src = "FaultReport.msg",
+    package = "status_msgs",
+    deps = [
+        ":FaultKey",
+        "@builtin_interfaces//msg:Time",
+    ],
+)
+
+ros_message(
+    name = "KillswitchReport",
+    src = "KillswitchReport.msg",
+    package = "status_msgs",
+)
+
+ros_message(
+    name = "SafetyStatus",
+    src = "SafetyStatus.msg",
+    package = "status_msgs",
+    deps = [
+        "@builtin_interfaces//msg:Time",
+        ":FaultReport",
+    ],
+)
+
+interface_definitions(kind = "msg")

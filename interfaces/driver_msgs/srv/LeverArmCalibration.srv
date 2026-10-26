@@ -1,0 +1,22 @@
+# Which stage of GNSS lever-arm/alignment auto-calibration to run.
+uint8 command
+
+uint8 COMMAND_START = 0   # begin calibration, estimating the channels selected below
+uint8 COMMAND_APPLY = 1   # commit the completed estimate to the device settings and save
+uint8 COMMAND_CANCEL = 2  # abort a running calibration and reset the INS filter
+
+# Which channels to estimate -- consulted only for COMMAND_START. An unspecified channel is
+# treated as disabled, matching the SBG device's own "if you don't specify a parameter it will
+# be considered to be disabled" semantics for POST /ekfAutoCal/start. Chosen per run instead of
+# fixed at launch, since which antennas have a calibratable baseline can differ by install.
+bool calibrate_gnss1_lever_arm
+bool calibrate_gnss1_alignment
+bool calibrate_gnss2_lever_arm
+bool calibrate_gnss2_alignment
+---
+uint8 resp_code
+
+uint8 RESPONSE_OK = 0      # command completed successfully
+uint8 RESPONSE_FAILED = 1  # command was attempted and failed -- see response_msg
+
+string response_msg

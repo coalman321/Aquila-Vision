@@ -1,0 +1,10 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Plain source, not an npm package: each web app compiles it in through its `$framework` alias
+# (see README.md). Put this in the app's Vite build srcs.
+js_library(
+    name = "srcs",
+    srcs = glob(["src/lib/**"]),
+)

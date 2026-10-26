@@ -1,0 +1,114 @@
+load("@rclcpp_components//:defs.bzl", "rclcpp_components_register_nodes")
+load("@rosdistro//ament:defs.bzl", "ament_index")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
+load(":share_dir.bzl", "share_dir")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "camera_webserver_msgs",
+    deps = [
+        "//interfaces/calibration_msgs/msg:CamCalStatus",
+        "//interfaces/calibration_msgs/srv:CamCalRequest",
+        "//interfaces/process_msgs/srv:RemoteRequest",
+        "@geometry_msgs//msg:TransformStamped",
+        "@sensor_msgs//msg:Image",
+    ],
+)
+
+# Every RCR cc_shared_library the node reaches, directly or through //basin/web/web_core and
+# //basin/core/node_core (see //basin/web/web_core/BUILD.bazel).
+DYNAMIC_DEPENDENCIES = {
+    "@ament_index_cpp//:ament_index_cpp": "@ament_index_cpp//:ament_index_cpp_library",
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rclcpp_components//:rclcpp_components": "@rclcpp_components//:rclcpp_components_library",
+    "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
+    "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
+    "@tf2//:tf2": "@tf2//:tf2_library",
+    "@tf2_geometry_msgs//:tf2_geometry_msgs": "@tf2_geometry_msgs//:tf2_geometry_msgs_library",
+    "@tf2_ros//:tf2_ros": "@tf2_ros//:tf2_ros_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+cc_library(
+    name = "camera_web_node",
+    srcs = glob(["src/**/*.cpp"]),
+    hdrs = glob(["include/**/*.hpp"]),
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":camera_webserver_msgs",
+        "//basin/core/node_core",
+        "//basin/web/web_core",
+        "//basin/web/web_core:file_manager_component",
+        "//basin/web/web_core:jsonable",
+        "//basin/web/web_core:launch_component",
+        "//basin/web/web_core:static_server_component",
+        "@aravis",
+        "@nlohmann_json//:json",
+    ],
+)
+
+# Wraps :camera_web_node as a dlopen-able plugin (see //perception/trt_detector/object_detector_ros),
+# loadable by a //basin/core/node_core:basin_container config as package `camera_webserver`,
+# library_name camera_web::CameraWebNode.
+cc_shared_library(
+    name = "camera_web_component",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+    exports_filter = [":camera_web_node"],
+    deps = [":camera_web_node"],
+)
+
+rclcpp_components_register_nodes(
+    name = "camera_web_components",
+    component = ":camera_web_component",
+    plugins = ["camera_web::CameraWebNode"],
+)
+
+# The web UI, as the static_content the node falls back to when app_dir has none.
+share_dir(
+    name = "static_content",
+    package_name = "camera_webserver",
+    src = "//camera_app/camera-app:build",
+    dest = "static_content",
+)
+
+# The `.prod.py` launch descriptions go under share/camera_webserver/launch, where
+# //basin/launch resolves a (package, launch file) pair; `libraries` publishes the message
+# typesupport libraries into lib/ next to the plugin.
+ament_index(
+    name = "ament_index",
+    components = [":camera_web_components"],
+    data = glob(["launch/**"]),
+    data_strip_prefix = "camera_app/camera_webserver",
+    export_name = "camera_webserver",
+    libraries = [":camera_webserver_msgs"],
+    deps = [":static_content"],
+)
+
+cc_binary(
+    name = "camera_web",
+    srcs = ["src/camera_web_main.cc"],
+    data = [":ament_index"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = DYNAMIC_DEPENDENCIES.values() + [":camera_web_node"],
+)

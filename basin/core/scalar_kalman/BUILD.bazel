@@ -1,0 +1,25 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "scalar_kalman",
+    hdrs = ["include/scalar_kalman/scalar_kalman.hpp"],
+    includes = ["include"],
+)
+
+# test_main.cpp provides its own main(), so link plain gtest (not gtest_main,
+# and not the "@rosdistro//cc:googletest" wrapper, which bundles gtest_main
+# and would collide with it).
+cc_test(
+    name = "scalar_kalman_test",
+    size = "small",
+    srcs = [
+        "test/test_main.cpp",
+        "test/test_scalar_kalman.cpp",
+    ],
+    deps = [
+        ":scalar_kalman",
+        "@googletest//:gtest",
+    ],
+)

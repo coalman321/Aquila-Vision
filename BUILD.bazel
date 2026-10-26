@@ -1,0 +1,16 @@
+load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
+
+package(default_visibility = ["//visibility:public"])
+
+# Generates compile_commands.json for clangd/clang-tidy: `bazel run //:refresh_compile_commands`.
+#
+# External sources (ROS, LLVM's own libcxxabi, ...) are left out. The extractor preprocesses every
+# source to discover its headers, and for the libc++/libcxxabi that the hermetic toolchain builds
+# from @llvm-project, that fails with "_LIBCPP_HARDENING_MODE_DEFAULT is not defined": their
+# __config_site is a generated file that doesn't exist yet at that point. Nobody edits those
+# sources, and headers they'd contribute are still picked up through the workspace's own
+# translation units.
+refresh_compile_commands(
+    name = "refresh_compile_commands",
+    exclude_external_sources = True,
+)

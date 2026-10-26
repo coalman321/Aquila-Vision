@@ -1,68 +1,14 @@
-# Prerequisites
-*.d
+# Bazel output symlinks
+/bazel-*
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Per-user Bazel config overrides
+/user.bazelrc
 
-# Precompiled Headers
-*.gch
-*.pch
+# ROS_HOME, created at runtime by nodes (logs, etc.)
+/.ros/
 
-# Linker files
-*.ilk
+# GitLab CI Bazel/bazelisk caches and collected test reports
+/.ci-cache/
+/test-reports/
 
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-*.so.*
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# Build directories
-build/
-Build/
-build-*/
-
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
-install_manifest.txt
-compile_commands.json
-
-# Temporary files
-*.tmp
-*.log
-*.bak
-*.swp
-
-# vcpkg
-vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
-Testing/
-.cache/
+tarball_*.tar.gz

@@ -1,0 +1,105 @@
+load("@rclcpp_components//:defs.bzl", "rclcpp_components_register_nodes")
+load("@rosdistro//ament:defs.bzl", "ament_index")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "object_detector_msgs",
+    deps = [
+        "@sensor_msgs//msg:CameraInfo",
+        "@sensor_msgs//msg:Image",
+        "@vision_msgs//msg:Detection2DArray",
+    ],
+)
+
+# Every RCR cc_shared_library the node reaches, directly or through //basin/core/node_core and
+# //perception/trt_detector/object_detector_lib (see //basin/core/node_core/BUILD.bazel). OpenCV is
+# here too: cv_bridge and image_geometry link the shared @rosdistro//cc:opencv, so the detector's
+# pre/post-processing has to use that same copy rather than link a second one statically.
+DYNAMIC_DEPENDENCIES = {
+    "@cv_bridge//:cv_bridge": "@cv_bridge//:cv_bridge_library",
+    "@image_geometry//:image_geometry": "@image_geometry//:image_geometry_library",
+    "@image_transport//:image_transport": "@image_transport//:image_transport_library",
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rclcpp_components//:rclcpp_components": "@rclcpp_components//:rclcpp_components_library",
+    "@rosdistro//cc:opencv": "@rosdistro//cc:opencv_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+cc_library(
+    name = "object_detector_node",
+    srcs = ["src/object_detector_node.cpp"],
+    hdrs = [
+        "include/object_detector_ros/object_detector_node.hpp",
+        "include/object_detector_ros/object_detector_params.hpp",
+    ],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":object_detector_msgs",
+        "//basin/core/node_core",
+        "//perception/trt_detector/object_detector_lib",
+    ],
+)
+
+# Wraps :object_detector_node as a dlopen-able plugin (see //basin/safety/BUILD.bazel), loadable by
+# a //basin/core/node_core:basin_container config as package `yolo_detector`, library_name
+# object_detector::ObjectDetectorNode.
+cc_shared_library(
+    name = "object_detector_component",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+    exports_filter = [":object_detector_node"],
+    deps = [":object_detector_node"],
+)
+
+rclcpp_components_register_nodes(
+    name = "object_detector_components",
+    component = ":object_detector_component",
+    plugins = ["object_detector::ObjectDetectorNode"],
+)
+
+# `libraries` publishes the message typesupport libraries into lib/ next to the plugin (see the
+# matching comment in //basin/safety/BUILD.bazel). image_transport resolves its publisher/subscriber
+# plugins through pluginlib while libimage_transport.so is still loading, so whatever hosts the
+# component needs image_transport's own index too; `deps` brings it along.
+ament_index(
+    name = "ament_index",
+    components = [":object_detector_components"],
+    export_name = "yolo_detector",
+    libraries = [":object_detector_msgs"],
+    deps = [
+        "@image_transport//:ament_index_package",
+        "@image_transport//:ament_index_plugin",
+    ],
+)
+
+# The standalone-process form of the node: `bazel run
+# //perception/trt_detector/object_detector_ros:object_detector -- --ros-args -p
+# network_path:=/abs/path/model.onnx`.
+cc_binary(
+    name = "object_detector",
+    srcs = ["src/object_detector_main.cpp"],
+    data = [":ament_index"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    deps = DYNAMIC_DEPENDENCIES.values() + [":object_detector_node"],
+)

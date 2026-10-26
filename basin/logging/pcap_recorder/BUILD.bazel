@@ -1,0 +1,189 @@
+load("@aspect_rules_py//py:defs.bzl", "py_test")
+load("@rclcpp_components//:defs.bzl", "rclcpp_components_register_nodes")
+load("@rosdistro//ament:defs.bzl", "ament_index")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "pcap_recorder_msgs",
+    deps = [
+        "//interfaces/logging_msgs/msg:PcapCapture",
+        "//interfaces/status_msgs/msg:FaultReport",
+    ],
+)
+
+# The node links rclcpp, rclcpp_components (RCLCPP_COMPONENTS_REGISTER_NODE at the bottom of
+# pcap_recorder_node.cpp) and, via //basin/core/node_core, rosbag2_cpp/rosbag2_storage -- all
+# cc_shared_library targets, so every consumer needs the same dynamic_deps wiring. See the comment
+# on NODE_CORE_DYNAMIC_DEPENDENCIES in //basin/core/node_core/BUILD.bazel.
+DYNAMIC_DEPENDENCIES = {
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rclcpp_components//:rclcpp_components": "@rclcpp_components//:rclcpp_components_library",
+    "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
+    "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+DYNAMIC_DEPS_SELECT = select({
+    ":dynamic_mode_off": [],
+    ":rmw_dynamic": [":transitive_dynamic_deps"],
+    "//conditions:default": [],
+})
+
+# The pcap stream parser, packet buffer and chunker: plain data, no ROS.
+cc_library(
+    name = "pcap_stream",
+    srcs = ["src/pcap_stream.cpp"],
+    hdrs = ["include/pcap_recorder/pcap_stream.hpp"],
+    includes = ["include"],
+)
+
+cc_library(
+    name = "pcap_recorder",
+    srcs = [
+        "src/bundled_tcpdump.cpp",
+        "src/pcap_recorder_node.cpp",
+    ],
+    hdrs = [
+        "include/pcap_recorder/pcap_recorder_node.hpp",
+        "include/pcap_recorder/pcap_recorder_params.hpp",
+    ],
+    # The node runs tcpdump as a child process. Bundling it here puts it in the runfiles of
+    # everything built on this library -- :pcap_recorder_node, the tests, the //basin tarball --
+    # where an empty tcpdump.path finds it (src/bundled_tcpdump.cpp).
+    data = ["@tcpdump"],
+    includes = ["include"],
+    local_defines = ['PCAP_RECORDER_TCPDUMP_RLOCATION=\\"$(rlocationpath @tcpdump)\\"'],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":pcap_recorder_msgs",
+        ":pcap_stream",
+        "//basin/core/node_core",
+        "//basin/core/process_lib",
+        "@rules_cc//cc/runfiles",
+    ],
+)
+
+# Wraps :pcap_recorder as a dlopen-able plugin, the same pattern as //basin/logging/continuous_logger's
+# :logger_component, so a //basin/core/node_core:basin_container config can load it with
+# library_name basin::pcap_recorder::PcapRecorderNode / package_name pcap_recorder.
+cc_shared_library(
+    name = "pcap_recorder_component",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+    exports_filter = [":pcap_recorder"],
+    deps = [":pcap_recorder"],
+)
+
+rclcpp_components_register_nodes(
+    name = "pcap_recorder_components",
+    component = ":pcap_recorder_component",
+    plugins = ["basin::pcap_recorder::PcapRecorderNode"],
+)
+
+# The standalone-process form of the node.
+# `bazel run //basin/logging/pcap_recorder:pcap_recorder_node -- --ros-args --params-file basin/logging/pcap_recorder/config/pcap_recorder.yaml`
+# runs the bundled @tcpdump, which still needs capture privileges: run as root, or give that
+# binary CAP_NET_RAW/CAP_NET_ADMIN.
+cc_binary(
+    name = "pcap_recorder_node",
+    srcs = ["src/pcap_recorder_main.cpp"],
+    dynamic_deps = DYNAMIC_DEPS_SELECT,
+    deps = DYNAMIC_DEPENDENCIES.values() + [":pcap_recorder"],
+)
+
+# Registers the component and config/ under the `pcap_recorder` ament package, and publishes
+# the executable at lib/pcap_recorder/pcap_recorder_node for a launch description's
+# Node(package="pcap_recorder", executable="pcap_recorder_node"), with tcpdump beside it.
+# `libraries` publishes the message typesupport into lib/ next to the plugin (see the matching
+# comment in //basin/logging/continuous_logger/BUILD.bazel).
+ament_index(
+    name = "ament_index",
+    components = [":pcap_recorder_components"],
+    data = glob(["config/**"]),
+    data_strip_prefix = "basin/logging/pcap_recorder",
+    export_name = "pcap_recorder",
+    lib_data = [
+        ":pcap_recorder_node",
+        "@tcpdump",
+    ],
+    libraries = [":pcap_recorder_msgs"],
+)
+
+# Stands in for tcpdump in the tests: streams a counter as pcap until signalled.
+cc_binary(
+    name = "fake_tcpdump",
+    testonly = True,
+    srcs = ["test/fake_tcpdump.cpp"],
+)
+
+cc_test(
+    name = "pcap_stream_test",
+    size = "small",
+    srcs = ["test/test_pcap_stream.cpp"],
+    deps = [
+        ":pcap_stream",
+        "@googletest//:gtest_main",
+    ],
+)
+
+# test files here have no main() of their own, so they need the googletest wrapper.
+cc_test(
+    name = "pcap_recorder_params_test",
+    size = "small",
+    srcs = ["test/test_params.cpp"],
+    dynamic_deps = DYNAMIC_DEPS_SELECT,
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":pcap_recorder",
+        "@rosdistro//cc:googletest",
+    ],
+)
+
+# Runs the real node in-process over :fake_tcpdump with a probe node beside it that raises faults
+# and reads pcap/capture. Its own DDS domain comes from the pid (see the fixture).
+cc_test(
+    name = "pcap_recorder_node_test",
+    size = "small",
+    srcs = ["test/test_pcap_recorder_node.cpp"],
+    data = [":fake_tcpdump"],
+    dynamic_deps = DYNAMIC_DEPS_SELECT,
+    env = {"FAKE_TCPDUMP": "$(rlocationpath :fake_tcpdump)"},
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":pcap_recorder",
+        "@rosdistro//cc:googletest",
+    ],
+)
+
+# Runs :pcap_recorder_component as deployed -- hosted by //basin/core/node_core:basin_container,
+# found through :ament_index -- which the cc_tests above, linking :pcap_recorder directly, never
+# exercise.
+py_test(
+    name = "pcap_recorder_component_test",
+    size = "small",
+    srcs = ["test/test_pcap_recorder_component.py"],
+    data = [
+        ":ament_index",
+        ":fake_tcpdump",
+        "//basin/core/node_core:basin_container",
+    ],
+    main = "test/test_pcap_recorder_component.py",
+    deps = [
+        "//tools/ros_test_domain",
+        "@rules_python//python/runfiles",
+    ],
+)
