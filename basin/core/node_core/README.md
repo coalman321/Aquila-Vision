@@ -492,4 +492,4 @@ protected:
 
 Maintainer: `coalman321 <cjtucker321@gmail.com>` (see `package.xml`).
 
-License: `Proprietary`
+License: `MIT` (see the repository root `LICENSE`)

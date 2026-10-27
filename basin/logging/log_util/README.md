@@ -268,7 +268,7 @@ snapshots:
 
 ## License
 
-Proprietary
+MIT - see the repository root `LICENSE`.
 
 ## Maintainer
 

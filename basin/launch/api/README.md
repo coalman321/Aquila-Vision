@@ -206,7 +206,7 @@ This package follows PEP 257 for docstrings and uses flake8 for linting.
 
 ## License
 
-Proprietary
+MIT - see the repository root `LICENSE`.
 
 ## Maintainer
 

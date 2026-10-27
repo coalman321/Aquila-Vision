@@ -761,7 +761,7 @@ python3 examples/query_snapshots.py extract /path/to/logs snapshot_001 /output
 
 ## License
 
-Proprietary
+MIT - see the repository root `LICENSE`.
 
 ## Maintainer
 

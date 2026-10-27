@@ -5,7 +5,7 @@
   <version>1.0.1</version>
   <description>TUI application for controlling a remote launch instance</description>
   <maintainer email="cjtucker321@gmail.com">Cole Tucker</maintainer>
-  <license>Proprietary</license>
+  <license>MIT</license>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

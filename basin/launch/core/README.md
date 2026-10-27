@@ -213,7 +213,7 @@ bazel run //basin/launch/core:launch_node_exe -- --ros-args --log-level debug
 
 ## License
 
-Proprietary - See package.xml for details.
+MIT - see the repository root `LICENSE`.
 
 ## Maintainer
 
