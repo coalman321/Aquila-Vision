@@ -114,6 +114,16 @@ bazel_dep(name = "vision_msgs", version = "4.2.0-3.rcr.1")
 # cv_bridge above; not transitively pulled in by ros_core.
 bazel_dep(name = "image_geometry", version = "4.1.0-3.rcr.1")
 
+# Referenced by //drivers/basler_driver (the Basler camera driver): camera_info_url
+# loading (camera_info_manager, same image_common release as image_transport above) and its
+# camera_availability/intrinsic_calibration diagnostics. Neither is transitively pulled in by
+# ros_core. std_srvs (its command services) and diagnostic_msgs already are, so "0.0.0" resolves
+# via MVS.
+bazel_dep(name = "camera_info_manager", version = "6.4.9-1.rcr.1")
+bazel_dep(name = "diagnostic_msgs", version = "0.0.0")
+bazel_dep(name = "diagnostic_updater", version = "4.4.7-1.rcr.1")
+bazel_dep(name = "std_srvs", version = "0.0.0")
+
 # Referenced by //basin/drivers/velodyne-ros2/... (vendored from the
 # upstream ros-drivers/velodyne repo -- see that tree's own LICENSE/COPYING).
 # angles isn't transitively pulled in by anything else in this graph, so (like

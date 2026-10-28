@@ -40,8 +40,8 @@ def create_pipeline(filename: os.PathLike, source_config: dict) -> list:
 
         nodes.append(
             Node(
-                package_name="pylon_ros2_camera_wrapper",
-                executable="pylon_ros2_camera_wrapper",
+                package_name="basler_driver",
+                executable="basler_driver",
                 node_name="driver",
                 namespace="/" + camera_name,
                 params=[

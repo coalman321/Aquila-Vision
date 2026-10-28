@@ -14,6 +14,7 @@ ROS 2 message and service definitions shared across the basin robot stack.
 | `process_msgs` | Remote process monitoring/control, execution determinism records |
 | `status_msgs` | Fault reporting and safety/killswitch status |
 | `timesync_msgs` | PTP time-sync status |
+| `basler_driver_msgs` | Basler camera driver status (//drivers/basler_driver) |
 
 These are Bazel-only: each package is just its `.msg`/`.srv` files plus a
 `BUILD.bazel` under each `msg/`/`srv/` directory declaring

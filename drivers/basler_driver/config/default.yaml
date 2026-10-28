@@ -1,0 +1,7 @@
+/**:
+  ros__parameters:
+    camera_frame: basler_camera
+    device_user_id: ""
+    device_serial: ""
+    camera_info_url: ""
+    frame_rate: 5.0

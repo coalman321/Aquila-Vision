@@ -1,0 +1,164 @@
+load("@rclcpp_components//:defs.bzl", "rclcpp_components_register_nodes")
+load("@rosdistro//ament:defs.bzl", "ament_index")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "camera_msgs",
+    deps = [
+        "@sensor_msgs//msg:CameraInfo",
+        "@sensor_msgs//msg:RegionOfInterest",
+    ],
+)
+
+cc_ros_library(
+    name = "node_msgs",
+    deps = [
+        "//interfaces/basler_driver_msgs/msg:ComponentStatus",
+        "@diagnostic_msgs//msg:DiagnosticArray",
+        "@sensor_msgs//msg:CameraInfo",
+        "@sensor_msgs//msg:Image",
+        "@std_srvs//srv:Trigger",
+    ],
+)
+
+# Every RCR cc_shared_library the node reaches. OpenCV is here too: cv_bridge and image_geometry link
+# the shared @rosdistro//cc:opencv, so the node has to use that same copy.
+DYNAMIC_DEPENDENCIES = {
+    "@camera_info_manager//:camera_info_manager": "@camera_info_manager//:camera_info_manager_library",
+    "@cv_bridge//:cv_bridge": "@cv_bridge//:cv_bridge_library",
+    "@diagnostic_updater//:diagnostic_updater": "@diagnostic_updater//:diagnostic_updater_library",
+    "@image_geometry//:image_geometry": "@image_geometry//:image_geometry_library",
+    "@image_transport//:image_transport": "@image_transport//:image_transport_library",
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rclcpp_components//:rclcpp_components": "@rclcpp_components//:rclcpp_components_library",
+    "@rosdistro//cc:opencv": "@rosdistro//cc:opencv_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+DYNAMIC_DEPS_SELECT = select({
+    ":dynamic_mode_off": [],
+    ":rmw_dynamic": [":transitive_dynamic_deps"],
+    "//conditions:default": [],
+})
+
+# The camera itself, through Aravis: no ROS beyond message/parameter types.
+cc_library(
+    name = "camera",
+    srcs = [
+        "src/binary_exposure_search.cpp",
+        "src/encoding_conversions.cpp",
+        "src/genicam.cpp",
+        "src/basler_camera.cpp",
+        "src/basler_driver_parameters.cpp",
+    ],
+    hdrs = [
+        "include/basler_driver/binary_exposure_search.hpp",
+        "include/basler_driver/encoding_conversions.hpp",
+        "include/basler_driver/genicam.hpp",
+        "include/basler_driver/basler_camera.hpp",
+        "include/basler_driver/basler_driver_parameters.hpp",
+    ],
+    includes = ["include"],
+    deps = [
+        ":camera_msgs",
+        "@aravis",
+        "@rclcpp//:rclcpp_library",
+        # sensor_msgs/image_encodings.hpp
+        "@sensor_msgs//:cc",
+    ],
+)
+
+cc_library(
+    name = "basler_driver_node",
+    srcs = ["src/basler_driver_node.cpp"],
+    hdrs = ["include/basler_driver/basler_driver_node.hpp"],
+    # image_transport resolves its publisher plugins through pluginlib while libimage_transport.so is
+    # still loading, so without these the node dies in a static initializer before main().
+    data = [
+        "@image_transport//:ament_index_package",
+        "@image_transport//:ament_index_plugin",
+    ],
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":camera",
+        ":node_msgs",
+    ],
+)
+
+# Wraps :basler_driver_node as a dlopen-able plugin, loadable by a
+# //basin/core/node_core:basin_container config with library_name
+# basler_driver::BaslerDriverNode / package_name basler_driver.
+cc_shared_library(
+    name = "basler_driver_component",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+    exports_filter = [":basler_driver_node"],
+    deps = [":basler_driver_node"],
+)
+
+rclcpp_components_register_nodes(
+    name = "basler_driver_components",
+    component = ":basler_driver_component",
+    plugins = ["basler_driver::BaslerDriverNode"],
+)
+
+# The standalone-process form of the node.
+# `bazel run //drivers/basler_driver:basler_driver -- --ros-args -p device_serial:=<serial>`
+cc_binary(
+    name = "basler_driver",
+    srcs = ["src/basler_driver_main.cpp"],
+    dynamic_deps = DYNAMIC_DEPS_SELECT,
+    deps = DYNAMIC_DEPENDENCIES.values() + [":basler_driver_node"],
+)
+
+# Registers the `basler_driver` ament package with config/ under its share directory,
+# and publishes the executable at lib/basler_driver/basler_driver for a
+# launch description's Node(package_name="basler_driver", executable="basler_driver").
+ament_index(
+    name = "ament_index",
+    components = [":basler_driver_components"],
+    data = glob(["config/**"]),
+    data_strip_prefix = "drivers/basler_driver",
+    export_name = "basler_driver",
+    lib_data = [":basler_driver"],
+    libraries = [":node_msgs"],
+    # lib_data places the executable alone, without its runfiles, so a tree that ships this package
+    # (e.g. //camera_app/camera_webserver's) needs image_transport's plugin index from here too.
+    deps = [
+        "//interfaces/basler_driver_msgs:ament_index",
+        "@image_transport//:ament_index_package",
+        "@image_transport//:ament_index_plugin",
+    ],
+)
+
+# Runs the real node in-process against Aravis' simulated camera (its "Fake" interface), so the whole
+# open/trigger/grab/publish path and the live parameters are exercised without hardware.
+cc_test(
+    name = "basler_driver_node_test",
+    size = "small",
+    srcs = ["test/test_basler_driver_node.cpp"],
+    # Aravis' own description of its simulated camera (LGPL-2.1-or-later, like the rest of Aravis).
+    data = ["test/testdata/arv-fake-camera.xml"],
+    dynamic_deps = DYNAMIC_DEPS_SELECT,
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":basler_driver_node",
+        "@rosdistro//cc:googletest",
+    ],
+)

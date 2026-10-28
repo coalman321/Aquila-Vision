@@ -90,7 +90,7 @@ share_dir(
 
 # The `.prod.py` launch descriptions go under share/camera_webserver/launch, where
 # //basin/launch resolves a (package, launch file) pair; `libraries` publishes the message
-# typesupport libraries into lib/ next to the plugin.
+# typesupport libraries into lib/ next to the plugin, and `deps` the packages those launch files start.
 ament_index(
     name = "ament_index",
     components = [":camera_web_components"],
@@ -98,7 +98,11 @@ ament_index(
     data_strip_prefix = "camera_app/camera_webserver",
     export_name = "camera_webserver",
     libraries = [":camera_webserver_msgs"],
-    deps = [":static_content"],
+    deps = [
+        ":static_content",
+        # The camera driver launch/application.prod.py starts for each camera source.
+        "//drivers/basler_driver:ament_index",
+    ],
 )
 
 cc_binary(

@@ -22,8 +22,9 @@ The camera webserver stack, vendored from the standalone
   be fetched by Bazel. `BaslerCameraSource` now uses [Aravis](https://registry.bazel.build/modules/aravis)
   (open source, built from the BCR), which finds GigE Vision and USB3 Vision cameras and reports the same
   serial number and model name; Basler cameras are the ones whose vendor says so. Untested against hardware.
-  The camera driver itself (`pylon_ros2_camera_wrapper`, named in `application.prod.py`) is not in this
-  workspace and still needs Pylon.
+  The camera driver `application.prod.py` launches is [//drivers/basler_driver](../drivers/basler_driver/),
+  an Aravis-based replacement for Basler's Pylon-based `pylon_ros2_camera_wrapper`, for USB3 Vision cameras,
+  with that driver's parameter names.
 - **camera_cal has no CUDA path.** The OpenCV in this workspace has no `cudawarping`/`cudaimgproc`, so
   `CAMERA_CAL_HAVE_CUDA` is never defined; it is the CPU path the original fell back to.
 - **Lyrical API changes.** `BASIN_PARAM`/`BASIN_DYN_PARAM` became `createParam`/`createDynParam`, and tf2's
