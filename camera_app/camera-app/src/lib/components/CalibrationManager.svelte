@@ -5,6 +5,9 @@
   export let serverUrl: string = "http://localhost:8080";
   export let debugImageTopic: string = "/camera_cal/debug_image";
   export let pollIntervalMs: number = 1000;
+  // Above this many samples calibrateCamera slows down sharply and the extra frames are mostly
+  // redundant poses, so the user is told to cancel and start a fresh session.
+  export let maxSamples: number = 50;
 
   // ── Status shape ──────────────────────────────────────────────────────────
   interface CalStatus {
@@ -81,6 +84,8 @@
 
   // A calibration result is available when there are samples and a non-zero reprojection error
   $: isCalibrated = status.cal_samples > 0 && status.reproj_err > 0;
+
+  $: tooManySamples = isRunning && status.cal_samples > maxSamples;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function base() {
@@ -431,6 +436,16 @@
               <dt>Reprojection error</dt><dd>{status.reproj_err.toFixed(4)} px</dd>
               <dt>Status</dt><dd class="cal-status {isCalibrated ? 'ready' : 'collecting'}">{isCalibrated ? '✓ Ready' : 'Collecting…'}</dd>
             </dl>
+            {#if tooManySamples}
+              <div class="warning-banner" role="alert">
+                <span>
+                  ⚠ {status.cal_samples} samples collected (recommended maximum {maxSamples}). Calibrating
+                  this many frames is slow and adds little accuracy; cancel and start over with fewer,
+                  more varied poses.
+                </span>
+                <button class="btn-secondary" on:click={handleStop} disabled={busy}>Cancel</button>
+              </div>
+            {/if}
           {:else}
             <p class="muted">No calibration in progress.</p>
           {/if}
@@ -888,6 +903,23 @@
     border-radius: 6px;
     padding: 10px 14px;
     font-size: 0.875rem;
+  }
+
+  .warning-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    background: #3b2a05;
+    border: 1px solid #92400e;
+    color: #fcd34d;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 0.875rem;
+  }
+
+  .warning-banner .btn-secondary {
+    flex-shrink: 0;
   }
 
   /* ── Toasts ──────────────────────────────────────────────────────────── */
