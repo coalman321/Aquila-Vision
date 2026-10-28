@@ -11,4 +11,4 @@
 /.ci-cache/
 /test-reports/
 
-tarball_*.tar.gz
+*.tar.gz

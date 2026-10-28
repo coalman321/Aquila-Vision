@@ -34,11 +34,13 @@ systemctl restart aquila-vision
 
 # The web server is the last of the launch node's first children to bind; give the rest a moment
 # after it answers, and make sure the service didn't die and restart in between.
+echo "==> Waiting for the web UI on :5800 (up to 60 s)"
 healthy=0
-for _ in $(seq 1 60); do
+for i in $(seq 1 60); do
     sleep 1
     systemctl is-active --quiet aquila-vision || continue
-    if curl -fsS -m 2 -o /dev/null http://localhost:5800/; then
+    if curl -fs -m 2 -o /dev/null http://localhost:5800/; then
+        echo "    answered after ${i}s; checking it stays up"
         sleep 5
         systemctl is-active --quiet aquila-vision && healthy=1
         break

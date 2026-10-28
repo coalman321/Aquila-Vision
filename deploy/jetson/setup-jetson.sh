@@ -220,7 +220,9 @@ if [ "$HOLD_NVIDIA" -eq 1 ]; then
     step "Holding the nvidia-l4t packages"
     # An unattended apt upgrade replacing the driver stack would leave the CUDA/TensorRT in the
     # tarball talking to a driver it wasn't tested with.
-    mapfile -t l4t < <(dpkg-query -W -f='${Package}\n' 'nvidia-l4t-*' 2>/dev/null || true)
+    # Installed ones only: dpkg also lists names that are known but not installed, which apt-mark rejects.
+    mapfile -t l4t < <(dpkg-query -W -f='${db:Status-Abbrev}${Package}\n' 'nvidia-l4t-*' 2>/dev/null |
+        sed -n 's/^ii //p' || true)
     [ "${#l4t[@]}" -eq 0 ] || apt-mark hold "${l4t[@]}" >/dev/null
 fi
 

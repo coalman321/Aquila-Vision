@@ -35,16 +35,25 @@ SHA=$(sha256sum "$TARBALL" | cut -d' ' -f1)
 RELEASE="$(date -u +%Y%m%d-%H%M%S)-${SHA:0:8}"
 STAGE="/tmp/aquila-deploy-$RELEASE"
 
+# Ask for the sudo password once, up front, and check it before the long upload. It goes to sudo -S on
+# ssh's stdin, never on a command line. Skipped when the remote user has passwordless sudo.
+SUDO_PASS=""
+if ! ssh "$HOST" sudo -n true 2>/dev/null; then
+    read -r -s -p "sudo password for $HOST: " SUDO_PASS
+    echo
+    printf '%s\n' "$SUDO_PASS" | ssh "$HOST" sudo -S -p "''" -v 2>/dev/null \
+        || { echo "ERROR: sudo on $HOST rejected the password" >&2; exit 1; }
+fi
+
 echo "==> Uploading $(basename "$TARBALL") ($(du -h "$TARBALL" | cut -f1)) as release $RELEASE"
 ssh "$HOST" "mkdir -p '$STAGE'"
 # rsync resumes a dropped transfer of the multi-gigabyte archive; scp is the fallback.
 if command -v rsync >/dev/null && ssh "$HOST" command -v rsync >/dev/null; then
-    rsync --partial --info=progress2 "$TARBALL" "$HERE/verify-jetson.sh" "$HERE/install-release.sh" "$HOST:$STAGE/"
+    rsync --partial --progress "$TARBALL" "$HERE/verify-jetson.sh" "$HERE/install-release.sh" "$HOST:$STAGE/"
 else
     scp "$TARBALL" "$HERE/verify-jetson.sh" "$HERE/install-release.sh" "$HOST:$STAGE/"
 fi
 ssh "$HOST" "mv '$STAGE/$(basename "$TARBALL")' '$STAGE/release.tar.gz'"
 
 echo "==> Installing on $HOST"
-# -t: sudo may want a password.
-ssh -t "$HOST" sudo bash "$STAGE/install-release.sh" "$RELEASE" "$SHA" "$STAGE" "$KEEP"
+printf '%s\n' "$SUDO_PASS" | ssh "$HOST" sudo -S -p "''" bash "$STAGE/install-release.sh" "$RELEASE" "$SHA" "$STAGE" "$KEEP"
