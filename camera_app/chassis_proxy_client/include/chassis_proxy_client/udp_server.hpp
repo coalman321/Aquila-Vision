@@ -2,39 +2,44 @@
 
 #include <netinet/in.h>
 
-#include <cstdint>
-#include <cstring>
-#include <deque>
-#include <memory>
+#include <functional>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
-#include "chassis_proxy_client/proxy_subscription.hpp"
+#include "chassis_proxy/v1/envelope.pb.h"
 
 namespace proxy_client {
 
-using message_map_t = std::unordered_map<uint8_t, std::deque<std::vector<uint8_t>>>;
-using sub_map_t = std::unordered_map<uint8_t, std::unique_ptr<ProxySubscriptionBase>>;
+namespace v1 = chassis_proxy::v1;
 
 class UdpServer {
    public:
+    /// Outcome of one processPackets() call
+    enum class ReceiveResult {
+        kNoPacket,         ///< Nothing was waiting on the socket
+        kDispatched,       ///< A packet was parsed and its payload's handler called
+        kUnhandled,        ///< A packet was parsed but no handler is registered for its payload
+        kMalformed,        ///< A packet was not a valid Envelope and was dropped
+        kVersionMismatch,  ///< A packet's protocol_version is not ours and it was dropped
+    };
+
+    using handler_t = std::function<void(const v1::Envelope&)>;
+
     UdpServer(int local_port, const std::string& remote_addr, int remote_port);
 
-    int processPackets();
+    ~UdpServer();
 
-    template <typename T>
-    void registerType(std::function<void(T result)> callback) {
-        sub_map_.emplace(T().msg_id, new ProxySubscription<T>(callback));
-    }
+    UdpServer(const UdpServer&) = delete;
+    UdpServer& operator=(const UdpServer&) = delete;
 
-    template <typename T>
-    void sendMsg(const T& msg) {
-        sendPacket(T::serialize(msg));
-    }
+    /// Receives at most one packet and dispatches it to the handler registered for its payload.
+    /// Throws std::system_error if the socket read itself fails.
+    ReceiveResult processPackets();
 
-   protected:
-    void sendPacket(const std::vector<uint8_t>& byte_buffer);
+    void registerHandler(v1::Envelope::PayloadCase payload, handler_t handler);
+
+    /// Stamps the envelope with our protocol version and sends it to the remote address
+    void send(v1::Envelope envelope);
 
    private:
     std::string remote_addr_;
@@ -44,7 +49,7 @@ class UdpServer {
     int local_port_;
     struct sockaddr_in local_addr_cfg_;  ///< Local bind address config
 
-    sub_map_t sub_map_;  ///< map of message id to subscription callback
+    std::unordered_map<int, handler_t> handlers_;  ///< payload case to handler
 
     int socket_fd_ = -1;  ///< file descriptor for the socket
 };

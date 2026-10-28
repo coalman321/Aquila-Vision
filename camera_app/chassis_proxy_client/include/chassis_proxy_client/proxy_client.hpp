@@ -18,9 +18,6 @@
 #include <tf2_ros/transform_listener.hpp>
 #include <vision_msgs/msg/detection2_d_array.hpp>
 
-#include "chassis_proxy_client/messages/auto_snapshot/auto_snapshot.hpp"
-#include "chassis_proxy_client/messages/clock_sync/sync_response.hpp"
-#include "chassis_proxy_client/messages/match_info/match_info.hpp"
 #include "chassis_proxy_client/udp_server.hpp"
 #include "logging_msgs/srv/snapshot_request.hpp"
 
@@ -74,11 +71,11 @@ class ProxyClientNode : public basin::node_core::NodeCore {
 
     void tagSolutionCb(localization_msgs::msg::TagSolution::ConstSharedPtr msg);
 
-    void matchInfoCb(MatchInfo msg);
+    void matchInfoCb(const v1::MatchInfo& msg);
 
-    void autosnapCb(AutoSnapshot msg);
+    void autosnapCb(const v1::AutoSnapshot& msg);
 
-    void syncResponseCb(SyncResponseMsg msg);
+    void syncResponseCb(const v1::TimesyncResponse& msg);
 
    private:
     std::unique_ptr<ProxyClientNodeParams> params_;

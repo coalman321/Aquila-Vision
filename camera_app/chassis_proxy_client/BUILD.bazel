@@ -1,7 +1,7 @@
 load("@rosdistro//ament:defs.bzl", "ament_index")
 load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
 load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
-load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -46,16 +46,25 @@ collect_transitive_dynamic_deps(
     dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
 )
 
+# The UDP transport: one chassis_proxy.v1.Envelope (defined in MW-Lib, see @mwlib) per datagram.
+cc_library(
+    name = "udp_server",
+    srcs = ["src/udp_server.cpp"],
+    hdrs = ["include/chassis_proxy_client/udp_server.hpp"],
+    includes = ["include"],
+    deps = ["@mwlib//:chassis_proxy_cc_proto"],
+)
+
 # Relays detections, camera info and tag solutions to the roboRIO over UDP and takes match info,
-# snapshot requests and clock sync back. Vendored from MW-Lib's chassis_proxy_client; the message
-# codecs are .cpp files under include/, hence the glob.
+# snapshot requests and clock sync back. Vendored from MW-Lib's chassis_proxy_client.
 cc_binary(
     name = "proxy_client",
-    srcs = glob([
-        "src/**/*.cpp",
-        "include/**/*.cpp",
-        "include/**/*.hpp",
-    ]),
+    srcs = [
+        "include/chassis_proxy_client/proxy_client.hpp",
+        "include/chassis_proxy_client/time_util.hpp",
+        "src/proxy_client.cpp",
+        "src/time_util.cpp",
+    ],
     dynamic_deps = select({
         ":dynamic_mode_off": [],
         ":rmw_dynamic": [":transitive_dynamic_deps"],
@@ -64,6 +73,7 @@ cc_binary(
     includes = ["include"],
     deps = DYNAMIC_DEPENDENCIES.values() + [
         ":proxy_client_msgs",
+        ":udp_server",
         "//basin/core/node_core",
         "@rosdistro//cc:yaml-cpp_library",
     ],
@@ -78,4 +88,19 @@ ament_index(
     export_name = "chassis_proxy_client",
     lib_data = [":proxy_client"],
     libraries = [":proxy_client_msgs"],
+)
+
+# Loopback round trips through UdpServer, and the golden Envelope frames MW-Lib's Java tests check too.
+cc_test(
+    name = "udp_server_test",
+    size = "small",
+    srcs = ["test/test_udp_server.cpp"],
+    data = ["@mwlib//:chassis_proxy_fixtures"],
+    deps = [
+        ":udp_server",
+        "@googletest//:gtest_main",
+        "@protobuf",
+        "@protobuf//:differencer",
+        "@rules_cc//cc/runfiles",
+    ],
 )

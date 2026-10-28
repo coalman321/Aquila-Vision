@@ -95,13 +95,6 @@ build --@curl//:ssl_lib=openssl
 # Restrict test sandboxes from accessing the network.
 test --sandbox_default_allow_network=false
 
-# PCL's memory.h #warns when Eigen's "handmade" aligned malloc is in use,
-# because a TU built with AVX (32-byte alignment) could mix with one built
-# without it (16-byte). Every TU here is built by the same hermetic toolchain
-# with the same flags, so the mismatch it guards against can't happen; silence
-# it via PCL's own flag rather than defining PCL_SILENCE_MALLOC_WARNING by hand.
-build --@pcl//:pcl_silence_malloc_warning=True
-
 # rosbag2_cpp's CMake build enables -Wthread-safety, but its manual
 # lock()/unlock() pairs (MessageCache::get_consumer_buffer/
 # release_consumer_buffer) trip -Wthread-safety-analysis under this libc++
