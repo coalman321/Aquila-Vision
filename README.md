@@ -35,6 +35,17 @@ bazel build //deploy:aquila_vision_debug    # the same, unstripped, to symbolize
 Build on an aarch64 machine (the devcontainer is). The default CUDA architecture is Orin's `sm_87`
 (`.bazelrc`); pass `--config=thor` to build for Jetson Thor instead.
 
+### Releasing a version
+
+The version lives in [VERSION](VERSION) and is shown on the UI's Status tab (served at `/api/version`). Bump it
+before building, like `npm version`; with a clean working tree:
+
+```
+tools/bump_version.sh patch    # or minor, major, or an explicit X.Y.Z
+git push --follow-tags         # the commit "Release vX.Y.Z" and its tag vX.Y.Z
+bazel build //deploy:aquila_vision
+```
+
 ### One-time setup of a Jetson
 
 1. Flash JetPack 7.2.1. The Orin Nano developer kit has no SD card image any more: use NVIDIA's unified

@@ -94,7 +94,7 @@ share_dir(
 ament_index(
     name = "ament_index",
     components = [":camera_web_components"],
-    data = glob(["launch/**"]),
+    data = glob(["launch/**"]) + ["//:VERSION"],
     data_strip_prefix = "camera_app/camera_webserver",
     export_name = "camera_webserver",
     libraries = [":camera_webserver_msgs"],
