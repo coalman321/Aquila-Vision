@@ -2,6 +2,9 @@ load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile
 
 package(default_visibility = ["//visibility:public"])
 
+# The release version, bumped with tools/bump_version.sh. Shipped in the camera_webserver share directory.
+exports_files(["VERSION"])
+
 # Generates compile_commands.json for clangd/clang-tidy: `bazel run //:refresh_compile_commands`.
 #
 # External sources (ROS, LLVM's own libcxxabi, ...) are left out. The extractor preprocesses every

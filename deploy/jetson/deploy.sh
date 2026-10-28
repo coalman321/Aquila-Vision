@@ -7,7 +7,7 @@
 # Run from the repository after `bazel build //deploy:aquila_vision`. Needs SSH access to HOST and
 # sudo there. Layout on the Jetson:
 #
-#   /opt/aquila-vision/releases/<timestamp>-<sha>/   unpacked tarballs
+#   /opt/aquila-vision/releases/<timestamp>-v<version>-<sha>/   unpacked tarballs
 #   /opt/aquila-vision/current -> releases/<...>     what aquila-vision.service runs
 set -euo pipefail
 
@@ -32,7 +32,8 @@ HOST=${REMOTE_USER:+$REMOTE_USER@}$1
 
 [ -f "$TARBALL" ] || { echo "ERROR: $TARBALL not found (bazel build //deploy:aquila_vision)" >&2; exit 1; }
 SHA=$(sha256sum "$TARBALL" | cut -d' ' -f1)
-RELEASE="$(date -u +%Y%m%d-%H%M%S)-${SHA:0:8}"
+VERSION=$(tr -d "[:space:]" < "$HERE/../../VERSION")
+RELEASE="$(date -u +%Y%m%d-%H%M%S)-v${VERSION}-${SHA:0:8}"
 STAGE="/tmp/aquila-deploy-$RELEASE"
 
 # Ask for the sudo password once, up front, and check it before the long upload. It goes to sudo -S on

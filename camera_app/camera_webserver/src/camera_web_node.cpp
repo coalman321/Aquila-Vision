@@ -1,6 +1,7 @@
 #include "camera_webserver/camera_web_node.hpp"
 
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <fstream>
 #include <memory>
 #include <rclcpp/qos.hpp>
 
@@ -19,6 +20,23 @@ CameraWebNode::CameraWebNode(const rclcpp::NodeOptions& options) :
 
     getServer().Get("/api/test", [this](const httplib::Request&, httplib::Response& res) {
         res.set_content("{\"message\": \"Hello from web_test!\"}", "application/json");
+    });
+
+    // The release version, from the VERSION file in the package share directory (see tools/bump_version.sh)
+    std::string version = "unknown";
+    try {
+        std::ifstream version_file(std::filesystem::path(ament_index_cpp::get_package_share_directory("camera_webserver")) /
+                                   "VERSION");
+        std::string line;
+        if (std::getline(version_file, line) && !line.empty()) {
+            version = line;
+        }
+    } catch (const std::exception& e) {
+        RCLCPP_WARN(get_logger(), "Could not read the release version: %s", e.what());
+    }
+    RCLCPP_INFO(get_logger(), "Aquila Vision version %s", version.c_str());
+    getServer().Get("/api/version", [version](const httplib::Request&, httplib::Response& res) {
+        res.set_content("{\"version\": \"" + version + "\"}", "application/json");
     });
 
     // Setup file managers
