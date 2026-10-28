@@ -95,9 +95,7 @@ def generate_launch_description() -> list:
                     "image_topic": "",
                     "camera_info_topic": "/camera_info",
                     "base_frame": "base_link",
-                    "board_rows": 7,
-                    "board_cols": 10,
-                    "square_size_mm": 22.86,
+                    # Board type and geometry come with each start request (CalibrationManager.svelte).
                 }
             ],
             # args=["--ros-args", "--log-level", "warn"],

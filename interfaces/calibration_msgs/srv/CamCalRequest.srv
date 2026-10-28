@@ -12,8 +12,28 @@ string image_topic
 # string for the name of the camera
 string camera_name
 
-# Edge length between corners in m
+# Calibration target type (REQ_START_CAL only)
+uint8 board_type
+uint8 BOARD_CHESSBOARD = 0
+uint8 BOARD_CHARUCO = 1
+
+# Board dimensions
+#   BOARD_CHESSBOARD: number of internal corners
+#   BOARD_CHARUCO:    number of squares
+uint16 board_rows
+uint16 board_cols
+
+# Edge length of one board square in m
 float32 edge_len
+
+# BOARD_CHARUCO only: edge length of one ArUco marker in m (must be less than edge_len)
+float32 marker_len
+
+# BOARD_CHARUCO only: predefined ArUco dictionary name, e.g. "DICT_5X5_100"
+string aruco_dict
+
+# BOARD_CHARUCO only: board uses the pre-OpenCV-4.6 layout (differs for even row counts)
+bool charuco_legacy_pattern
 
 ---
 
@@ -24,7 +44,8 @@ uint8 ERR_CAL_RUNNING = 1
 uint8 ERR_NO_CAL_RUNNING = 2
 uint8 ERR_NOT_READY = 3
 uint8 ERR_INVLD_EDGE_LEN = 4
-uint8 ERR_OK = 5
+uint8 ERR_INVLD_BOARD = 5
+uint8 ERR_OK = 6
 
 string err_msg
 

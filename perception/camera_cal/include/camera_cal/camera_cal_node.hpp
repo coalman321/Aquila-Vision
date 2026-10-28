@@ -22,8 +22,13 @@ namespace camera_cal {
 /// -------
 ///   camera_cal/request  (calibration_msgs/CalRequest)
 ///       REQ_START_CAL    – Begin a new calibration session for the supplied
-///                          image_topic / camera_name.  Rejected if a session
-///                          is already active (ERR_CAL_RUNNING).
+///                          image_topic / camera_name.  board_type selects the
+///                          calibrator (BOARD_CHESSBOARD or BOARD_CHARUCO), and
+///                          board_rows / board_cols / edge_len (plus marker_len,
+///                          aruco_dict and charuco_legacy_pattern for ChArUco)
+///                          describe the board.  Rejected if a session is
+///                          already active (ERR_CAL_RUNNING) or the board is
+///                          invalid (ERR_INVLD_EDGE_LEN / ERR_INVLD_BOARD).
 ///       REQ_STOP_CAL     – Abort the current session and discard data.
 ///                          Rejected if no session is active (ERR_NO_CAL_RUNNING).
 ///       REQ_COMPLETE_CAL – Finalise calibration, save results to disk, and
@@ -98,6 +103,11 @@ class CameraCalNode : public basin::node_core::NodeCore {
                             calibration_msgs::srv::CamCalRequest::Response::SharedPtr resp);
 
     // ----- Helpers -----
+    /// Build the calibrator subclass selected by @p req.board_type.
+    /// @return nullptr with @p err set if the board description is invalid
+    std::unique_ptr<CameraCalibrator> makeCalibrator(const calibration_msgs::srv::CamCalRequest::Request& req,
+                                                     std::string& err) const;
+
     /// Subscribe or re-subscribe img_sub_ to @p topic.
     void subscribeToTopic(const std::string& topic);
 

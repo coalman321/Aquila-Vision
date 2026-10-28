@@ -59,6 +59,7 @@ class CameraCalClient(Node):
         request_id: int,
         image_topic: str = "",
         camera_name: str = "",
+        board: Optional[dict] = None,
     ) -> str:
         if not self._client.wait_for_service(timeout_sec=1.0):
             msg = "ERROR: service 'camera_cal/request' not available"
@@ -70,6 +71,8 @@ class CameraCalClient(Node):
         req.request_id = request_id
         req.image_topic = image_topic
         req.camera_name = camera_name
+        for field, value in (board or {}).items():
+            setattr(req, field, value)
 
         future = self._client.call_async(req)
 
@@ -96,6 +99,8 @@ class CameraCalClient(Node):
             CamCalRequest.Response.ERR_CAL_RUNNING:    "ERR_CAL_RUNNING",
             CamCalRequest.Response.ERR_NO_CAL_RUNNING: "ERR_NO_CAL_RUNNING",
             CamCalRequest.Response.ERR_NOT_READY:      "ERR_NOT_READY",
+            CamCalRequest.Response.ERR_INVLD_EDGE_LEN: "ERR_INVLD_EDGE_LEN",
+            CamCalRequest.Response.ERR_INVLD_BOARD:    "ERR_INVLD_BOARD",
         }
         code_str = code_map.get(resp.err_code, f"ERR({resp.err_code})")
         is_error = resp.err_code != CamCalRequest.Response.ERR_OK
@@ -180,6 +185,34 @@ def _prompt(stdscr, prompt: str, y: int, x: int, max_w: int = 60) -> str:
     finally:
         curses.noecho()
         curses.curs_set(0)
+
+
+def _prompt_board(stdscr, y: int, x: int) -> dict:
+    """Prompt for the board description on rows y and y+1.
+
+    Returns CamCalRequest.Request field values; raises ValueError on bad input.
+    """
+    def ask(prompt: str, default: str, row: int) -> str:
+        return _prompt(stdscr, f"{prompt} [{default}]: ", row, x) or default
+
+    kind = ask("Board type  (c = chessboard, a = charuco)", "c", y).lower()
+    if kind not in ("c", "a"):
+        raise ValueError(f"unknown board type '{kind}'")
+    charuco = kind == "a"
+
+    dims = "squares" if charuco else "internal corners"
+    board = {
+        "board_type": (CamCalRequest.Request.BOARD_CHARUCO if charuco
+                       else CamCalRequest.Request.BOARD_CHESSBOARD),
+        "board_rows": int(ask(f"Board rows  ({dims})", "7" if charuco else "6", y + 1)),
+        "board_cols": int(ask(f"Board cols  ({dims})", "5" if charuco else "9", y)),
+        "edge_len":   float(ask("Square edge (mm)", "22.86", y + 1)) / 1000.0,
+    }
+    if charuco:
+        board["marker_len"] = float(ask("Marker edge (mm)", "17.0", y)) / 1000.0
+        board["aruco_dict"] = ask("ArUco dictionary", "DICT_5X5_100", y + 1)
+        board["charuco_legacy_pattern"] = ask("Legacy pattern (y/n)", "n", y).lower() == "y"
+    return board
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -310,13 +343,20 @@ def _tui(stdscr, node: CameraCalClient) -> None:
                              h - 4, 2)
             camera = _prompt(stdscr, "Camera name  (blank = node default): ",
                              h - 3, 2)
+            try:
+                board = _prompt_board(stdscr, h - 4, 2)
+            except ValueError as e:
+                board = None
+                node.log(f"START    → ERROR: invalid board input: {e}")
             stdscr.nodelay(True)
-            msg = node.send_request(
-                CamCalRequest.Request.REQ_START_CAL,
-                image_topic=topic,
-                camera_name=camera,
-            )
-            node.log(f"START    → {msg}")
+            if board is not None:
+                msg = node.send_request(
+                    CamCalRequest.Request.REQ_START_CAL,
+                    image_topic=topic,
+                    camera_name=camera,
+                    board=board,
+                )
+                node.log(f"START    → {msg}")
 
         elif key in (ord("x"), ord("X")):
             msg = node.send_request(CamCalRequest.Request.REQ_STOP_CAL)

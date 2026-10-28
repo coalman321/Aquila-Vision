@@ -9,14 +9,6 @@ namespace camera_cal {
 /// @brief ROS 2 parameter bag for the camera calibration node.
 class CameraCalParams : public basin::node_core::NodeParams {
 public:
-    // ----- Board geometry -----
-
-    /// Number of internal corner rows on the calibration board
-    int board_rows{6};
-
-    /// Number of internal corner columns on the calibration board
-    int board_cols{9};
-
     // ----- Calibration settings -----
 
     /// Minimum number of accepted frames before calibration is allowed
@@ -43,8 +35,6 @@ public:
         createParam("min_captures", min_captures);
 
         // Dynamic params – can be updated at runtime
-        createDynParam("board_rows", board_rows);
-        createDynParam("board_cols", board_cols);
         createDynParam("motion_position_threshold", motion_position_threshold);
         createDynParam("motion_scale_threshold", motion_scale_threshold);
     }

@@ -5,6 +5,9 @@
   export let serverUrl: string = "http://localhost:8080";
   export let debugImageTopic: string = "/camera_cal/debug_image";
   export let pollIntervalMs: number = 1000;
+  // Above this many samples calibrateCamera slows down sharply and the extra frames are mostly
+  // redundant poses, so the user is told to cancel and start a fresh session.
+  export let maxSamples: number = 50;
 
   // ── Status shape ──────────────────────────────────────────────────────────
   interface CalStatus {
@@ -43,8 +46,32 @@
   let camerasLoading = false;
 
   // Start‑form fields
+  type BoardType = "chessboard" | "charuco";
+
+  // Predefined ArUco dictionaries accepted by camera_cal_node (cv::aruco::PredefinedDictionaryType)
+  const arucoDicts = [
+    "DICT_4X4_50", "DICT_4X4_100", "DICT_4X4_250", "DICT_4X4_1000",
+    "DICT_5X5_50", "DICT_5X5_100", "DICT_5X5_250", "DICT_5X5_1000",
+    "DICT_6X6_50", "DICT_6X6_100", "DICT_6X6_250", "DICT_6X6_1000",
+    "DICT_7X7_50", "DICT_7X7_100", "DICT_7X7_250", "DICT_7X7_1000",
+    "DICT_ARUCO_ORIGINAL",
+    "DICT_APRILTAG_16h5", "DICT_APRILTAG_25h9", "DICT_APRILTAG_36h10", "DICT_APRILTAG_36h11",
+    "DICT_ARUCO_MIP_36h12",
+  ];
+
   let startCameraName: string = "";
+  let boardType: BoardType = "chessboard";
+  // Chessboard: internal corners. ChArUco: squares.
+  let boardRows: number = 7;
+  let boardCols: number = 10;
   let edgeLengthMm: number = 22.86;
+  // ChArUco only
+  let markerLengthMm: number = 17.0;
+  let arucoDict: string = "DICT_5X5_100";
+  let legacyPattern = false;
+
+  $: isCharuco = boardType === "charuco";
+  $: dimsUnit = isCharuco ? "squares" : "internal corners";
 
   let busy = false;
   let toasts: Array<{ id: number; message: string; type: string }> = [];
@@ -57,6 +84,8 @@
 
   // A calibration result is available when there are samples and a non-zero reprojection error
   $: isCalibrated = status.cal_samples > 0 && status.reproj_err > 0;
+
+  $: tooManySamples = isRunning && status.cal_samples > maxSamples;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function base() {
@@ -112,8 +141,9 @@
         body: body ? JSON.stringify(body) : undefined,
       });
       const j = await res.json();
-      if (!res.ok || (j.err_code != null && j.err_code !== 0)) {
-        addToast(j.err_msg || `HTTP ${res.status}`, "error");
+      // The webserver answers 200 only for ERR_OK; anything else is an error status.
+      if (!res.ok) {
+        addToast(j.err_msg || j.error || `HTTP ${res.status}`, "error");
       } else {
         addToast(
           endpoint.includes("start")
@@ -137,13 +167,27 @@
       addToast("Please select a camera before starting.", "error");
       return;
     }
+    if (!Number.isInteger(boardRows) || !Number.isInteger(boardCols) || boardRows <= 0 || boardCols <= 0) {
+      addToast("Board rows and columns must be positive whole numbers.", "error");
+      return;
+    }
     if (!edgeLengthMm || edgeLengthMm <= 0) {
       addToast("Edge length must be greater than 0.", "error");
       return;
     }
+    if (isCharuco && (!markerLengthMm || markerLengthMm <= 0 || markerLengthMm >= edgeLengthMm)) {
+      addToast("Marker length must be greater than 0 and less than the square edge length.", "error");
+      return;
+    }
     callAction("/api/calibration/start", {
       camera_name: startCameraName.trim(),
+      board_type: boardType,
+      board_rows: boardRows,
+      board_cols: boardCols,
       edge_length_mm: edgeLengthMm,
+      ...(isCharuco
+        ? { marker_length_mm: markerLengthMm, aruco_dict: arucoDict, legacy_pattern: legacyPattern }
+        : {}),
     });
   }
 
@@ -252,11 +296,39 @@
             <tr>
               <td class="field">Board</td>
               <td class="value">
-                <span class="board-spec">7 × 10 corners (standard chessboard)</span>
+                <select class="board-select" bind:value={boardType} disabled={busy || isRunning}>
+                  <option value="chessboard">Chessboard</option>
+                  <option value="charuco">ChArUco</option>
+                </select>
               </td>
             </tr>
             <tr>
-              <td class="field">Edge Length</td>
+              <td class="field">Size</td>
+              <td class="value">
+                <div class="edge-length-row">
+                  <input
+                    type="number"
+                    bind:value={boardRows}
+                    min="1"
+                    step="1"
+                    aria-label="Board rows"
+                    disabled={busy || isRunning}
+                  />
+                  <span class="unit-label">×</span>
+                  <input
+                    type="number"
+                    bind:value={boardCols}
+                    min="1"
+                    step="1"
+                    aria-label="Board columns"
+                    disabled={busy || isRunning}
+                  />
+                  <span class="unit-label">{dimsUnit}</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td class="field">Square Edge</td>
               <td class="value">
                 <div class="edge-length-row">
                   <input
@@ -270,6 +342,42 @@
                 </div>
               </td>
             </tr>
+            {#if isCharuco}
+              <tr>
+                <td class="field">Marker Edge</td>
+                <td class="value">
+                  <div class="edge-length-row">
+                    <input
+                      type="number"
+                      bind:value={markerLengthMm}
+                      min="0.01"
+                      step="0.01"
+                      disabled={busy || isRunning}
+                    />
+                    <span class="unit-label">mm</span>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td class="field">Dictionary</td>
+                <td class="value">
+                  <select class="board-select" bind:value={arucoDict} disabled={busy || isRunning}>
+                    {#each arucoDicts as dict}
+                      <option value={dict}>{dict}</option>
+                    {/each}
+                  </select>
+                </td>
+              </tr>
+              <tr>
+                <td class="field">Legacy Layout</td>
+                <td class="value">
+                  <label class="checkbox-label">
+                    <input type="checkbox" bind:checked={legacyPattern} disabled={busy || isRunning} />
+                    <span class="unit-label">Board generated by OpenCV &lt; 4.6</span>
+                  </label>
+                </td>
+              </tr>
+            {/if}
             <tr>
               <td class="field">Camera</td>
               <td class="value">
@@ -328,6 +436,16 @@
               <dt>Reprojection error</dt><dd>{status.reproj_err.toFixed(4)} px</dd>
               <dt>Status</dt><dd class="cal-status {isCalibrated ? 'ready' : 'collecting'}">{isCalibrated ? '✓ Ready' : 'Collecting…'}</dd>
             </dl>
+            {#if tooManySamples}
+              <div class="warning-banner" role="alert">
+                <span>
+                  ⚠ {status.cal_samples} samples collected (recommended maximum {maxSamples}). Calibrating
+                  this many frames is slow and adds little accuracy; cancel and start over with fewer,
+                  more varied poses.
+                </span>
+                <button class="btn-secondary" on:click={handleStop} disabled={busy}>Cancel</button>
+              </div>
+            {/if}
           {:else}
             <p class="muted">No calibration in progress.</p>
           {/if}
@@ -538,10 +656,21 @@
     min-width: 0;
   }
 
-  .board-spec {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #e5e7eb;
+  .board-select {
+    padding: 6px 8px;
+    border: 1px solid #333;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    background: #1a1a1a;
+    color: #f9fafb;
+    max-width: 100%;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
   }
 
   .edge-length-row {
@@ -774,6 +903,23 @@
     border-radius: 6px;
     padding: 10px 14px;
     font-size: 0.875rem;
+  }
+
+  .warning-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    background: #3b2a05;
+    border: 1px solid #92400e;
+    color: #fcd34d;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 0.875rem;
+  }
+
+  .warning-banner .btn-secondary {
+    flex-shrink: 0;
   }
 
   /* ── Toasts ──────────────────────────────────────────────────────────── */

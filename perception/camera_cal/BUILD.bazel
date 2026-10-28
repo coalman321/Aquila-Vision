@@ -3,7 +3,7 @@ load("@rclcpp_components//:defs.bzl", "rclcpp_components_register_nodes")
 load("@rosdistro//ament:defs.bzl", "ament_index")
 load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
 load("@rosidl_default_generators//:defs.bzl", "cc_ros_library", "py_ros_library")
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -42,15 +42,38 @@ collect_transitive_dynamic_deps(
     dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
 )
 
-# The calibration logic, with no ROS in it. The original built an optional CUDA path (CAMERA_CAL_HAVE_CUDA)
+# The calibration logic, with no ROS in it: a CameraCalibrator base plus one subclass per board type
+# (chessboard, ChArUco). The original built an optional CUDA path (CAMERA_CAL_HAVE_CUDA)
 # when OpenCV's cudawarping/cudaimgproc modules were found; the OpenCV here has none, so this is the
 # CPU path.
 cc_library(
     name = "camera_cal_lib",
-    srcs = ["src/calibrator.cpp"],
-    hdrs = ["include/camera_cal/calibrator.hpp"],
+    srcs = [
+        "src/calibrator.cpp",
+        "src/charuco_calibrator.cpp",
+        "src/chessboard_calibrator.cpp",
+    ],
+    hdrs = [
+        "include/camera_cal/calibrator.hpp",
+        "include/camera_cal/charuco_calibrator.hpp",
+        "include/camera_cal/chessboard_calibrator.hpp",
+    ],
     includes = ["include"],
     deps = ["@rosdistro//cc:opencv_library"],
+)
+
+# Renders ChArUco and chessboard views from a known camera and checks the calibrators recover it.
+# :camera_cal_lib has no ROS in it, so this links plain gtest_main rather than the
+# @rosdistro//cc:googletest wrapper, whose DDS cleanup helper needs an RMW implementation loaded.
+cc_test(
+    name = "calibrator_test",
+    size = "small",
+    srcs = ["test/calibrator_test.cpp"],
+    deps = [
+        ":camera_cal_lib",
+        "@googletest//:gtest_main",
+        "@rosdistro//cc:opencv_library",
+    ],
 )
 
 cc_library(
