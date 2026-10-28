@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Aquila Vision: a hawk swooping down toward the earth">
+  <title>Aquila Vision</title>
+  <defs>
+    <radialGradient id="sky" cx="50%" cy="30%" r="80%">
+      <stop offset="0" stop-color="#16395c"/>
+      <stop offset="1" stop-color="#050d18"/>
+    </radialGradient>
+    <radialGradient id="earth" cx="50%" cy="0%" r="100%">
+      <stop offset="0" stop-color="#4cb4ff"/>
+      <stop offset="0.35" stop-color="#0d5aa8"/>
+      <stop offset="1" stop-color="#072a52"/>
+    </radialGradient>
+    <linearGradient id="finger" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5a4a3a"/>
+      <stop offset="0.3" stop-color="#6e5a44"/>
+      <stop offset="0.62" stop-color="#efe6d6"/>
+    </linearGradient>
+    <filter id="glow" x="-10%" y="-30%" width="120%" height="160%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+    <clipPath id="tile"><rect width="512" height="512" rx="72"/></clipPath>
+    <clipPath id="planet"><circle cx="256" cy="720" r="330"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect width="512" height="512" fill="url(#sky)"/>
+    <g fill="#cfe9ff">
+      <circle cx="60" cy="62" r="2"/><circle cx="470" cy="46" r="2.4"/>
+      <circle cx="486" cy="206" r="2"/><circle cx="36" cy="250" r="2.2"/>
+      <circle cx="476" cy="330" r="1.8"/><circle cx="40" cy="170" r="1.6"/>
+    </g>
+
+    <!-- The earth below: its curved top fills the bottom of the tile. -->
+    <circle cx="256" cy="720" r="338" fill="none" stroke="#7fe3ff" stroke-width="14" opacity="0.55" filter="url(#glow)"/>
+    <circle cx="256" cy="720" r="330" fill="url(#earth)"/>
+    <g clip-path="url(#planet)" fill="#3f9d5a">
+      <path d="M90 470 C110 440 170 432 210 444 C230 454 215 478 180 482 C150 486 110 494 90 470 Z"/>
+      <path d="M300 450 C330 430 400 432 430 452 C440 468 410 480 370 478 C330 476 290 468 300 450 Z"/>
+    </g>
+    <circle cx="256" cy="720" r="330" fill="none" stroke="#9be8ff" stroke-width="2.5"/>
+
+    <!-- The hawk, drawn in a 1024-wide frame and scaled: wings up, tail fanned, talons forward. -->
+    <g transform="translate(120 20) scale(0.45) translate(-230 -20)" stroke-linejoin="round" stroke-linecap="round">
+
+      <!-- far wing (dark) -->
+      <path d="M612 190 C700 170 820 195 975 200 Q982.162 221.388 966 237.12 Q969.702 260.944 951 276.16 Q951.152 301.926 930 316.64 Q926.554 343.911 903 358.08 Q895.929 386.463 870 400 Q860.957 420.284 838.75 420.5 Q829.707 440.784 807.5 441 Q798.457 461.284 776.25 461.5 Q767.207 481.784 745 482 L700 300 Z" fill="#6b4a2f"/>
+      <path d="M700 290 Q780 270 900 250 M720 350 Q800 330 900 310 M740 410 Q810 390 890 360" fill="none" stroke="#3b2818" stroke-width="7"/>
+      <path d="M666.585 219.455 Q719.06 169.291 745 96 Q675.94 131.709 633.415 190.545 Z" fill="#3b2818" stroke="#2a1a0c" stroke-width="3"/>
+      <path d="M712.816 228.292 Q792.661 186.379 852 112 Q759.339 133.621 687.184 187.708 Z" fill="#3b2818" stroke="#2a1a0c" stroke-width="3"/>
+      <path d="M772.08 241.023 Q856.704 205.43 922 133 Q825.296 145.57 747.92 194.977 Z" fill="#3b2818" stroke="#2a1a0c" stroke-width="3"/>
+      <path d="M825.727 260.361 Q904.945 250.47 975 200 Q890.055 184.53 814.273 209.639 Z" fill="#3b2818" stroke="#2a1a0c" stroke-width="3"/>
+
+      <!-- tail: separate feathers fanned from the base -->
+      <path d="M578 667 L651 819 Q694 818 712 780 L601 652 Z" fill="#c4622a" stroke="#8a3a12" stroke-width="4"/>
+      <path d="M578 668 L703 864 Q745 859 760 819 L601 651 Z" fill="#b4531f" stroke="#8a3a12" stroke-width="4"/>
+      <path d="M580 669 L766 891 Q807 881 817 840 L599 650 Z" fill="#c4622a" stroke="#8a3a12" stroke-width="4"/>
+      <path d="M581 671 L828 886 Q867 871 871 829 L598 648 Z" fill="#b4531f" stroke="#8a3a12" stroke-width="4"/>
+      <path d="M583 672 L866 851 Q903 830 901 788 L596 647 Z" fill="#c4622a" stroke="#8a3a12" stroke-width="4"/>
+      <path d="M585 673 L869 801 Q902 775 894 734 L594 646 Z" fill="#b4531f" stroke="#8a3a12" stroke-width="4"/>
+      <path d="M586 673 L849 759 Q879 729 866 688 L593 646 Z" fill="#c4622a" stroke="#8a3a12" stroke-width="4"/>
+
+      <!-- body and thigh -->
+      <path d="M335 495 C332 560 362 630 405 690 C395 740 392 790 410 825 C415 850 430 870 445 872 C480 850 505 820 520 790 C560 730 600 690 640 640 C660 600 650 560 625 525 C560 450 450 405 372 392 C350 420 340 460 335 495 Z" fill="#f0d9b0"/>
+      <path d="M372 392 C450 405 560 450 625 525 C650 560 660 600 640 640 C600 600 520 560 470 520 C430 490 395 450 372 392 Z" fill="#8a6a45"/>
+      <path d="M385 560 Q430 575 470 560 M395 600 Q445 618 500 598 M420 645 Q470 662 520 640 M450 690 Q490 702 540 680" fill="none" stroke="#9c6a3a" stroke-width="8"/>
+
+      <!-- legs, toes and claws -->
+      <g fill="none" stroke="#f1b82d" stroke-width="24">
+        <path d="M392 760 L340 768"/>
+        <path d="M340 768 L264 768 M340 772 L272 798 M345 778 L335 816 M352 780 L360 822"/>
+      </g>
+      <g fill="none" stroke="#2b2b2b" stroke-width="7">
+        <path d="M262 768 Q238 770 234 792"/>
+        <path d="M272 798 Q256 802 256 818"/>
+        <path d="M335 816 Q322 826 322 842"/>
+        <path d="M360 822 Q372 832 350 844"/>
+      </g>
+
+      <!-- near wing (light) -->
+      <clipPath id="nearWing"><path d="M372 410 C350 340 300 270 262 190 L275 180 L470 135 Q496.84 136.119 510.16 159.446 Q538.14 161.38 552.507 185.466 Q580.999 188.158 595.554 212.799 Q623.932 216.198 637.813 241.181 Q665.468 245.263 677.799 270.35 Q704.152 275.143 714.023 300.044 Q738.549 305.677 745 330 Q758 355.333 745 380.667 Q758 406 745 431.333 Q758 456.667 745 482 Q725.521 494.291 707 480.6 Q687.521 492.891 669 479.2 Q649.521 491.491 631 477.8 Q611.521 490.091 593 476.4 Q573.521 488.691 555 475 Z"/></clipPath>
+      <path d="M372 410 C350 340 300 270 262 190 L275 180 L470 135 Q496.84 136.119 510.16 159.446 Q538.14 161.38 552.507 185.466 Q580.999 188.158 595.554 212.799 Q623.932 216.198 637.813 241.181 Q665.468 245.263 677.799 270.35 Q704.152 275.143 714.023 300.044 Q738.549 305.677 745 330 Q758 355.333 745 380.667 Q758 406 745 431.333 Q758 456.667 745 482 Q725.521 494.291 707 480.6 Q687.521 492.891 669 479.2 Q649.521 491.491 631 477.8 Q611.521 490.091 593 476.4 Q573.521 488.691 555 475 Z" fill="#ecdcc2"/>
+      <path d="M470 135 Q496.84 136.119 510.16 159.446 Q538.14 161.38 552.507 185.466 Q580.999 188.158 595.554 212.799 Q623.932 216.198 637.813 241.181 Q665.468 245.263 677.799 270.35 Q704.152 275.143 714.023 300.044 Q738.549 305.677 745 330 Q758 355.333 745 380.667 Q758 406 745 431.333 Q758 456.667 745 482 Q725.521 494.291 707 480.6 Q687.521 492.891 669 479.2 Q649.521 491.491 631 477.8 Q611.521 490.091 593 476.4 Q573.521 488.691 555 475" fill="none" stroke="#a97c4e" stroke-width="30" clip-path="url(#nearWing)"/>
+      <path d="M470 135 Q496.84 136.119 510.16 159.446 Q538.14 161.38 552.507 185.466 Q580.999 188.158 595.554 212.799 Q623.932 216.198 637.813 241.181 Q665.468 245.263 677.799 270.35 Q704.152 275.143 714.023 300.044 Q738.549 305.677 745 330 Q758 355.333 745 380.667 Q758 406 745 431.333 Q758 456.667 745 482 Q725.521 494.291 707 480.6 Q687.521 492.891 669 479.2 Q649.521 491.491 631 477.8 Q611.521 490.091 593 476.4 Q573.521 488.691 555 475" fill="none" stroke="#7b5a3a" stroke-width="4"/>
+      <path d="M483.499 193.857 L510.16 159.446 M509.755 209.989 L552.507 185.466 M536.443 226.935 L595.554 212.799 M562.644 244.532 L637.813 241.181 M587.435 262.617 L677.799 270.35 M609.894 281.027 L714.023 300.044 M629.1 299.6 L745 330 M629.1 331.013 L745 380.667 M629.1 362.427 L745 431.333 M629.1 393.84 L745 482 M605.54 392.972 L707 480.6 M581.98 392.104 L669 479.2 M558.42 391.236 L631 477.8 M534.86 390.368 L593 476.4" fill="none" stroke="#b98a55" stroke-width="5"/>
+      <path d="M372 410 C355 350 318 290 290 230 L322 222 C345 280 375 330 400 380 Z" fill="#8b5a2b"/>
+      <path d="M298.755 176.578 Q293.818 117.064 258 62 Q239.182 124.936 251.245 183.422 Z" fill="url(#finger)" stroke="#5a4a3a" stroke-width="4"/>
+      <path d="M343.797 162.888 Q338.867 97.4212 303 36 Q284.133 104.579 296.203 169.112 Z" fill="url(#finger)" stroke="#5a4a3a" stroke-width="4"/>
+      <path d="M393.827 153.124 Q390.401 94.693 356 40 Q335.599 101.307 346.173 158.876 Z" fill="url(#finger)" stroke="#5a4a3a" stroke-width="4"/>
+      <path d="M443.805 142.948 Q442.376 103.49 410 68 Q387.624 110.51 396.195 149.052 Z" fill="url(#finger)" stroke="#5a4a3a" stroke-width="4"/>
+      <path d="M492.602 129.928 Q488.492 107.717 455 96 Q436.508 126.283 447.398 146.072 Z" fill="url(#finger)" stroke="#5a4a3a" stroke-width="4"/>
+
+      <!-- head, turned down toward the earth -->
+      <path d="M350 400 C410 395 470 420 500 460 L430 520 C400 505 370 495 345 478 Z" fill="#7b5a3a"/>
+      <g transform="translate(-45 -67.5) scale(1.15)">
+      <path d="M232 505 C232 440 280 390 372 384 C380 420 370 450 345 478 C330 505 310 520 270 522 C250 525 238 520 232 505 Z" fill="#7b5a3a"/>
+      <path d="M250 505 C262 520 300 520 330 490 C310 500 280 500 250 505 Z" fill="#f0d9b0"/>
+      <path d="M258 480 L345 478 L338 462 Z" fill="#2a1a0c"/>
+      <ellipse cx="243" cy="514" rx="15" ry="12" fill="#f1b82d"/>
+      <path d="M262 498 C246 500 232 512 230 530 C230 540 235 548 242 551 C240 540 244 528 256 520 Z" fill="#3b3a3a"/>
+      <circle cx="262" cy="484" r="12" fill="#2a1a0c"/>
+      <circle cx="265" cy="481" r="3.5" fill="#fff"/>
+      </g>
+    </g>
+  </g>
+</svg>

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import favicon from '$lib/assets/favicon.svg';
+	import logoFull from '$lib/assets/logo-full.svg';
 	import { page } from '$app/stores';
 	import { base } from '$app/paths';
 
@@ -20,11 +21,15 @@
 </script>
 
 <svelte:head>
+	<title>Aquila</title>
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
 <div class="tab-layout">
 	<nav class="tab-nav" aria-label="Main navigation">
+		<div class="tab-logo">
+			<img src={logoFull} alt="Aquila" />
+		</div>
 		<div class="tab-top">
 			<ul>
 				{#each tabs as tab}
@@ -142,6 +147,16 @@
 		margin-bottom: auto;
 	}
 
+	.tab-logo {
+		margin-bottom: 12px;
+	}
+
+	.tab-logo img {
+		display: block;
+		width: 100%;
+		height: auto;
+	}
+
 	.tab-content {
 		flex: 1;
 		padding: 16px;
@@ -163,6 +178,10 @@
 			max-height: 60px;
 			overflow-y: hidden;
 			overflow-x: auto;
+		}
+
+		.tab-logo {
+			display: none;
 		}
 
 		.tab-nav ul {

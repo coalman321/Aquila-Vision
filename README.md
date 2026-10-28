@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo-full.svg" alt="Aquila" width="560">
+</p>
+
 # Aquila Vision
 
 Vision system for FRC robots, run on a Jetson Orin Nano. It reads Basler USB3 Vision cameras, detects
@@ -53,53 +57,6 @@ Build on an aarch64 machine (the devcontainer is). The default CUDA architecture
    needs; 
     - installs `aquila-runtime.service` (MAXN power mode, `jetson_clocks`, fan, `usbfs_memory_mb=64`);
     - holds the `nvidia-l4t-*` packages; sets up USB-stick automount (`/mnt/usb`); and installs and enables `aquila-vision.service`. `--skip-network` leaves networking alone; `--no-hold` leaves apt alone.
-
-### Setting up SSH access
-
-`deploy.sh` makes several `ssh` and `rsync` connections per run, so set up key-based login first to avoid
-a password prompt for each. Do this once per developer machine (the devcontainer included).
-
-1. Generate a key, if you don't have one already:
-
-   ```
-   ssh-keygen -t ed25519 -C "you@example.com"
-   ```
-
-   Accept the default path (`~/.ssh/id_ed25519`) and set a passphrase. Use `ssh-agent` so you only type it once
-   per session.
-
-2. Install the public key on the Jetson. This needs password login to still be enabled, which it is on a fresh
-   JetPack install:
-
-   ```
-   ssh-copy-id -i ~/.ssh/id_ed25519.pub <user>@<host>
-   ```
-
-   `<host>` is the Jetson's static address from setup (`10.TE.AM.<octet>`, e.g. `10.41.43.200`) or its
-   hostname. Without `ssh-copy-id`, append the contents of the `.pub` file to `~/.ssh/authorized_keys` on the
-   Jetson, with `~/.ssh` at mode `700` and `authorized_keys` at `600`.
-
-3. Check that it logs in without a password:
-
-   ```
-   ssh <user>@<host> true
-   ```
-
-Optionally add a host entry to `~/.ssh/config` so `deploy.sh` needs only the name:
-
-```
-Host jetson
-    HostName 10.41.43.200
-    User <user>
-    IdentityFile ~/.ssh/id_ed25519
-```
-
-`deploy.sh` asks for the sudo password once, at the start, unless the user has passwordless sudo. Once
-key login works, you can turn off password logins by setting `PasswordAuthentication no` in
-`/etc/ssh/sshd_config` on the Jetson and running `sudo systemctl reload ssh`.
-
-When the devcontainer is rebuilt, keys in its `~/.ssh` are lost unless that directory is mounted from the
-host; forward your host's `ssh-agent` or mount `~/.ssh` instead of copying private keys into the container.
 
 ### Deploying a release
 
@@ -163,3 +120,50 @@ it is running the detector.
   engine build), so `exclude` in [deploy/BUILD.bazel](deploy/BUILD.bazel) drops all the others. Recheck
   that after a TensorRT upgrade. `--config=thor` prunes nothing.
 - `webrtc_streamer_node` throws "rcl node's context is invalid" while shutting down.
+
+### Setting up SSH access
+
+`deploy.sh` makes several `ssh` and `rsync` connections per run, so set up key-based login first to avoid
+a password prompt for each. Do this once per developer machine (the devcontainer included).
+
+1. Generate a key, if you don't have one already:
+
+   ```
+   ssh-keygen -t ed25519 -C "you@example.com"
+   ```
+
+   Accept the default path (`~/.ssh/id_ed25519`) and set a passphrase. Use `ssh-agent` so you only type it once
+   per session.
+
+2. Install the public key on the Jetson. This needs password login to still be enabled, which it is on a fresh
+   JetPack install:
+
+   ```
+   ssh-copy-id -i ~/.ssh/id_ed25519.pub <user>@<host>
+   ```
+
+   `<host>` is the Jetson's static address from setup (`10.TE.AM.<octet>`, e.g. `10.41.43.200`) or its
+   hostname. Without `ssh-copy-id`, append the contents of the `.pub` file to `~/.ssh/authorized_keys` on the
+   Jetson, with `~/.ssh` at mode `700` and `authorized_keys` at `600`.
+
+3. Check that it logs in without a password:
+
+   ```
+   ssh <user>@<host> true
+   ```
+
+Optionally add a host entry to `~/.ssh/config` so `deploy.sh` needs only the name:
+
+```
+Host jetson
+    HostName 10.41.43.200
+    User <user>
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+`deploy.sh` asks for the sudo password once, at the start, unless the user has passwordless sudo. Once
+key login works, you can turn off password logins by setting `PasswordAuthentication no` in
+`/etc/ssh/sshd_config` on the Jetson and running `sudo systemctl reload ssh`.
+
+When the devcontainer is rebuilt, keys in its `~/.ssh` are lost unless that directory is mounted from the
+host; forward your host's `ssh-agent` or mount `~/.ssh` instead of copying private keys into the container.
