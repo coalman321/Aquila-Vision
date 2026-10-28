@@ -59,7 +59,6 @@ bazel_dep(name = "rclpy", version = "0.0.0")
 # own MODULE.bazel still declares rcr.1 (which ros_core also pins). This raises the resolved
 # rosdistro for the whole workspace, not just for foxglove_bridge.
 bazel_dep(name = "rosdistro", version = "lyrical.2026-06-08.rcr.3")
-bazel_dep(name = "rosidl_core_generators", version = "0.0.0")
 bazel_dep(name = "rosidl_default_generators", version = "0.0.0")
 bazel_dep(name = "std_msgs", version = "0.0.0")
 
@@ -88,8 +87,7 @@ bazel_dep(name = "rosbag2_storage", version = "0.33.3-1.rcr.1")
 # found", even though it links and compiles fine.
 bazel_dep(name = "rosbag2_storage_default_plugins", version = "0.33.3-1.rcr.1")
 
-# Referenced by //basin/drivers/sbg_driver (static transforms for GNSS
-# antenna lever arms) and the velodyne-ros2 packages below. Also not
+# Referenced by //camera_app and //perception/apriltag_detector/landmark_detector_ros. Also not
 # transitively pulled in by ros_core.
 bazel_dep(name = "tf2", version = "0.45.7-3.rcr.1")
 bazel_dep(name = "tf2_ros", version = "0.45.7-3.rcr.1")
@@ -97,10 +95,6 @@ bazel_dep(name = "tf2_ros", version = "0.45.7-3.rcr.1")
 # Referenced by //camera_app/camera_webserver (tf2::toMsg for quaternions). Same geometry2 release as
 # tf2 above; not transitively pulled in by ros_core.
 bazel_dep(name = "tf2_geometry_msgs", version = "0.45.7-3.rcr.1")
-
-# Referenced by foxglove_bridge, which describes /tf_static (tf2_msgs/TFMessage) from this
-# package's ament index. Already in the graph as a dependency of tf2_ros, at this version.
-bazel_dep(name = "tf2_msgs", version = "0.45.7-3.rcr.1")
 
 # Referenced by //perception/apriltag_detector/landmark_detector_ros: its camera subscription and
 # debug image publisher (image_transport), the mono8/bgr8 conversions to OpenCV (cv_bridge) and its
@@ -128,14 +122,6 @@ bazel_dep(name = "diagnostic_msgs", version = "0.0.0")
 bazel_dep(name = "diagnostic_updater", version = "4.4.7-1.rcr.1")
 bazel_dep(name = "std_srvs", version = "0.0.0")
 
-# Referenced by //basin/drivers/velodyne-ros2/... (vendored from the
-# upstream ros-drivers/velodyne repo -- see that tree's own LICENSE/COPYING).
-# angles isn't transitively pulled in by anything else in this graph, so (like
-# tf2/rclcpp_components/rosbag2 above) it needs a real pinned version -- the
-# "0.0.0" placeholder trick only works when some other dependency already
-# provides a real version to dominate it via MVS.
-bazel_dep(name = "angles", version = "1.16.1-3.rcr.1")
-
 # A real version rather than "0.0.0": rosx_introspection rcr.2 (a foxglove_bridge dependency)
 # includes ament_index_cpp/version.h, which only ament_index_cpp's rcr.2 generates, though that
 # module's own MODULE.bazel still declares rcr.1.
@@ -145,11 +131,6 @@ bazel_dep(name = "ament_index_cpp", version = "1.13.3-3.rcr.2")
 # ament_cmake_gen_version_h, which only defines it from rcr.2 (again, not what ament_index_cpp's
 # own MODULE.bazel declares).
 bazel_dep(name = "ament_cmake_gen_version_h", version = "2.8.7-3.rcr.2")
-
-# Only so .bazelrc can set --@pcl//:pcl_silence_malloc_warning (the velodyne
-# packages reach PCL via @rosdistro//cc:pcl_common). Comes from the BCR rather
-# than RCR, so it needs the real version rosdistro pins, not "0.0.0".
-bazel_dep(name = "pcl", version = "1.15.1.bcr.3")
 
 # Referenced by //tools/ros2_launch (a `ros2 launch` equivalent -- see that
 # target's comment for why it's needed). Directly pulled in by ros_core.
@@ -167,16 +148,12 @@ bazel_dep(name = "lifecycle_msgs", version = "0.0.0")
 # comment on its own py_binary usage).
 bazel_dep(name = "aspect_rules_py", version = "1.11.7")
 
-# libpcap (raw packet capture, used by velodyne_driver to read LIDAR UDP
-# packets) directly from the BCR: not proxied through rosdistro.
-bazel_dep(name = "libpcap", version = "1.10.5.bcr.3")
-
 # tcpdump, bundled with //basin/logging/pcap_recorder (which runs it as a child process) so it
 # ships in the //basin tarball instead of being needed on the host. It builds against the
 # libpcap above, so the parser patch below covers it too.
 bazel_dep(name = "tcpdump", version = "4.99.6")
 
-# libpcap's BCR build generates its grammar/scanner via bison/flex, both of
+# libpcap (pulled in by tcpdump above): its BCR build generates its grammar/scanner via bison/flex, both of
 # which need m4 -- and building m4 from source fails for Bazel's exec/
 # host-tool platform here: one of its generated gnulib headers assumes glibc
 # headers are on the exec-platform sysroot search path the way they are for
@@ -192,11 +169,8 @@ single_version_override(
     version = "1.10.5.bcr.3",
 )
 
-# BCR: googletest (pinned to the same version ros_core itself depends on)
-# and GeographicLib (used by //basin/core/site_lib for UTM projection math; not
-# available through RCR/rosdistro's proxied third-party libs).
+# BCR: googletest (pinned to the same version ros_core itself depends on).
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2")
-bazel_dep(name = "geographiclib", version = "2.4.0.bcr.2")
 
 # nlohmann_json (used by //basin/core/node_core's StateArchive) directly from the
 # BCR rather than through rosdistro's proxy: rosdistro only gained a
@@ -207,6 +181,22 @@ bazel_dep(name = "nlohmann_json", version = "3.12.0.bcr.2")
 # protobuf, pinned to the version already in the graph through the RCR modules.
 bazel_dep(name = "protobuf", version = "35.1")
 
+# MW-Lib (the team's roboRIO library) owns the .proto definitions of the UDP link between
+# //camera_app/chassis_proxy_client and its ProxyServerThread; //third_party/mwlib:mwlib.BUILD builds
+# them. Pinned to a release tag: bump the tag in urls and strip_prefix and the sha256 together, and
+# deploy robot code built against the same tag. To build against a local MW-Lib checkout instead,
+# temporarily swap this for new_local_repository (@bazel_tools//tools/build_defs/repo:local.bzl) with the
+# same name and build_file and path = "/path/to/MW-Lib".
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "mwlib",
+    build_file = "//third_party/mwlib:mwlib.BUILD",
+    sha256 = "",
+    strip_prefix = "MW-Lib-27.1.0",
+    urls = ["https://github.com/FRC-Team-4143/MW-Lib/archive/refs/tags/v27.1.0.tar.gz"],
+)
+
 # The HTTP server behind //basin/web/web_core's WebNode (header-only). Its BCR target lists
 # boringssl and zlib as deps but only turns on TLS/compression support through local_defines, which
 # a header-only library never applies to its consumers, so web_core gets plain HTTP (BoringSSL is
@@ -214,38 +204,14 @@ bazel_dep(name = "protobuf", version = "35.1")
 # linked from either). See ADDING_NEW_CONTENT.md.
 bazel_dep(name = "cpp-httplib", version = "0.46.0")
 
-# Named by an app's ament_index, which publishes the shared libraries its executables link into lib/
-# for the tarball (needed by foxglove_bridge). Transitive dependencies; "0.0.0" resolves to the version already in the graph.
-bazel_dep(name = "message_filters", version = "0.0.0")
-bazel_dep(name = "rcl_action", version = "0.0.0")
-bazel_dep(name = "rclcpp_action", version = "0.0.0")
-
-# Referenced by apps (streams ROS topics to Foxglove Studio over a websocket). From RCR, not
-# built from source; not part of ros_core, so like tf2/rosbag2 above it needs a real pinned
-# version. rcr.2 is the first release that builds (rcr.0/rcr.1 are metadata only), but it needs
-# newer versions of several packages than its MODULE.bazel declares: see the notes on rosdistro,
-# rclcpp, ament_index_cpp, ament_cmake_gen_version_h, rosidl_generator_py and rosx_introspection.
-bazel_dep(name = "foxglove_bridge", version = "3.4.1-1.rcr.2")
-
-# foxglove_bridge's MODULE.bazel declares rosx_introspection 2.3.0-3.rcr.1, which is a metadata-only
-# release (no library targets); rcr.2 is the first one that builds, so raise it here.
-bazel_dep(name = "rosx_introspection", version = "2.3.0-3.rcr.2")
-
 # GStreamer 1.28 with WebRTC, built from source by the workshop registry's gstreamer module, for
 # //basin/web/webrtc_streamer. It brings its own patched rules_foreign_cc (0.15.1.workshop.1), so
 # nothing here may pull in or override another rules_foreign_cc version.
 bazel_dep(name = "gstreamer", version = "1.28.7.workshop.1")
 
-# The S3 client and tar.gz writer behind //data_pipe/data_uploader/data_uploder_lib's DataUploader,
-# both directly from the BCR (the AWS SDK for C++ is published there as "aws_sdk", not
-# "aws-sdk-cpp"). The library only uses the SDK's S3 client, so it depends on @aws_sdk//:s3 rather
-# than the whole SDK.
-bazel_dep(name = "aws_sdk", version = "1.11.876.bcr.1")
-bazel_dep(name = "libarchive", version = "3.8.1.bcr.3")
-
 # Only so .bazelrc can set --@curl//:ssl_lib=openssl (see the comment there): a flag can only be
-# named through a module the root module depends on. Already in the graph via aws_sdk and
-# rosdistro, at the version pinned here.
+# named through a module the root module depends on. Already in the graph via rosdistro, at the
+# version pinned here.
 bazel_dep(name = "curl", version = "8.12.0")
 
 # linuxptp's ptp4l/phc2sys, which //basin/timesync:sync_node spawns as child processes, built
@@ -326,9 +292,6 @@ bazel_dep(name = "tensorrt", version = "10.16.1.11.workshop.1")
 # FRC 971's fork of the AprilTag 3 library, for //perception/apriltag_detector (the BCR and RCR
 # apriltag modules lack its quad_decode_index()/reconcile_detections() split).
 bazel_dep(name = "apriltag_frc971", version = "3.3.0")
-
-# SBG Systems' sbgECom, for //basin/drivers/sbg_driver.
-bazel_dep(name = "sbgecom", version = "5.8.935")
 
 # Lists the Basler cameras on the bus for //camera_app/camera_webserver (GigE Vision and USB3 Vision,
 # so no vendor SDK is needed). Built from source along with glib, libxml2 and libusb.

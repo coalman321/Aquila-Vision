@@ -1,5 +1,6 @@
 #include "chassis_proxy_client/proxy_client.hpp"
 
+#include <tf2/LinearMath/Matrix3x3.hpp>
 #include <tf2/LinearMath/Transform.hpp>
 #include <yaml-cpp/yaml.h>
 
@@ -7,9 +8,7 @@
 #include <limits>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
-#include "chassis_proxy_client/messages/clock_sync/sync_request.hpp"
-#include "chassis_proxy_client/messages/obj_det/proxy_det.hpp"
-#include "chassis_proxy_client/messages/tag_detection/tag_detection.hpp"
+#include "chassis_proxy_client/time_util.hpp"
 
 using namespace std::placeholders;
 using namespace std::chrono_literals;
@@ -51,7 +50,23 @@ ProxyClientNode::ProxyClientNode() : basin::node_core::NodeCore("proxy_client") 
 void ProxyClientNode::onTick() {
     // Called periodically by the base class tick timer
     try {
-        udp_server_->processPackets();
+        switch (udp_server_->processPackets()) {
+            case UdpServer::ReceiveResult::kMalformed:
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                                     "Dropped a proxy packet that is not a valid Envelope");
+                break;
+            case UdpServer::ReceiveResult::kVersionMismatch:
+                RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                                     "Dropped a proxy packet with an unsupported protocol_version (expected %d); "
+                                     "is the robot running the same MW-Lib release this build pins?",
+                                     v1::PROTOCOL_VERSION_CURRENT);
+                break;
+            case UdpServer::ReceiveResult::kUnhandled:
+                RCLCPP_DEBUG(get_logger(), "Ignored a proxy packet with no registered handler");
+                break;
+            default:
+                break;
+        }
     } catch (const std::runtime_error& e) {
         RCLCPP_WARN_STREAM(get_logger(), "Failed to handle proxy packet with error: " << e.what());
 
@@ -62,12 +77,13 @@ void ProxyClientNode::onTick() {
     // Periodically send clock sync requests to the server to maintain an accurate estimate of the clock offset
     const rclcpp::Time now = get_clock()->now();
     if (now - last_sync_time_ > rclcpp::Duration(5s)) {
-        SyncRequestMsg sync_req;
+        v1::Envelope envelope;
+        v1::TimesyncRequest* sync_req = envelope.mutable_timesync_request();
 
         RCLCPP_INFO(get_logger(), "Sending clock sync request to server");
 
-        sync_req.timestamp = TimeStamp::fromRosTime(get_clock()->now());
-        udp_server_->sendMsg(sync_req);
+        *sync_req->mutable_client_send() = toProto(get_clock()->now());
+        udp_server_->send(envelope);
         last_sync_time_ = now;
 
         RCLCPP_INFO(get_logger(), "Sent clock sync request to server");
@@ -123,23 +139,31 @@ void ProxyClientNode::tagSolutionCb(localization_msgs::msg::TagSolution::ConstSh
     tag_pose_pub_->publish(pose_msg);
 
     // now send it to the server
-    TagDetectionMsg proxy_msg;
-    proxy_msg.loadFromMsg(msg->detected_tags, base_pose,
-                          TimeStamp::fromRosTime(msg->header.stamp).offsetBy(clock_offset_sec_),
-                          msg->header.frame_id);
-    udp_server_->sendMsg(proxy_msg);
+    v1::Envelope envelope;
+    v1::TagSolution* proxy_msg = envelope.mutable_tag_solution();
+    *proxy_msg->mutable_stamp() = offsetBy(toProto(msg->header.stamp), clock_offset_sec_);
+    proxy_msg->set_camera_serial(msg->header.frame_id);
+    proxy_msg->mutable_tag_ids()->Add(msg->detected_tags.begin(), msg->detected_tags.end());
+
+    double roll, pitch, yaw;
+    tf2::Matrix3x3(base_pose_in_field.getRotation()).getRPY(roll, pitch, yaw);
+    v1::Pose2d* robot_pose = proxy_msg->mutable_robot_pose();
+    robot_pose->set_x_m(base_pose.position.x);
+    robot_pose->set_y_m(base_pose.position.y);
+    robot_pose->set_theta_rad(yaw);
+
+    udp_server_->send(envelope);
 }
 
-void ProxyClientNode::matchInfoCb(MatchInfo msg) {
-    // multiline
-    RCLCPP_INFO_STREAM(get_logger(), "Received Match Info for event: " << msg.evt_name);
+void ProxyClientNode::matchInfoCb(const v1::MatchInfo& msg) {
+    RCLCPP_INFO_STREAM(get_logger(), "Received Match Info for event: " << msg.event_name());
 
     YAML::Emitter emitter;
     emitter << YAML::BeginMap;
-    emitter << YAML::Key << "event_name" << YAML::Value << msg.evt_name;
-    emitter << YAML::Key << "match_num" << YAML::Value << msg.match_num;
-    emitter << YAML::Key << "match_type" << YAML::Value << msg.match_type;
-    emitter << YAML::Key << "station" << YAML::Value << msg.station;
+    emitter << YAML::Key << "event_name" << YAML::Value << msg.event_name();
+    emitter << YAML::Key << "match_num" << YAML::Value << msg.match_num();
+    emitter << YAML::Key << "match_type" << YAML::Value << v1::MatchType_Name(msg.match_type());
+    emitter << YAML::Key << "station" << YAML::Value << v1::AllianceStation_Name(msg.station());
     emitter << YAML::EndMap;
 
     logging_msgs::msg::LogMetadata meta_msg;
@@ -150,26 +174,26 @@ void ProxyClientNode::matchInfoCb(MatchInfo msg) {
     log_metadata_pub_->publish(meta_msg);
 }
 
-void ProxyClientNode::autosnapCb(AutoSnapshot msg) {
-    RCLCPP_INFO_STREAM(get_logger(), "Received Snapshot Request: " << msg.evt_name);
+void ProxyClientNode::autosnapCb(const v1::AutoSnapshot& msg) {
+    RCLCPP_INFO_STREAM(get_logger(), "Received Snapshot Request: " << msg.event_name());
 
     const rclcpp::Time now = get_clock()->now();
 
     logging_msgs::srv::SnapshotRequest::Request::SharedPtr request =
         std::make_shared<logging_msgs::srv::SnapshotRequest::Request>();
-    request->description = msg.evt_name;
-    request->snapshot_name = "autosnap_" + msg.evt_name + "_" + std::to_string(now.seconds());
-    request->request_id = msg.start_snapshot ? request->REQUEST_START : request->REQUEST_STOP;
+    request->description = msg.event_name();
+    request->snapshot_name = "autosnap_" + msg.event_name() + "_" + std::to_string(now.seconds());
+    request->request_id = msg.start() ? request->REQUEST_START : request->REQUEST_STOP;
 
     snapshot_resp_ = snapshot_client_->async_send_request(request).share();
 }
 
-void ProxyClientNode::syncResponseCb(SyncResponseMsg msg) {
+void ProxyClientNode::syncResponseCb(const v1::TimesyncResponse& msg) {
     const double client_time_at_recv = get_clock()->now().seconds();
 
     // recover the client and server time from the response
-    const double client_at_send = msg.client_send_stamp.toSec();
-    const double server_time = msg.server_stamp.toSec();
+    const double client_at_send = toSec(msg.client_send());
+    const double server_time = toSec(msg.server_recv());
 
     // compute the clock offset using the round trip time method
     const double half_rtt = (client_time_at_recv - client_at_send) / 2.0;
@@ -187,51 +211,41 @@ void ProxyClientNode::detectionsCb(vision_msgs::msg::Detection2DArray::ConstShar
         return;
     }
 
-    if (msg->detections.empty()) {
-        ProxyVisionDetection proxy_msg;
-        proxy_msg.sec = msg->header.stamp.sec;
-        proxy_msg.nanosec = msg->header.stamp.nanosec;
-        proxy_msg.camera_serial = msg->header.frame_id;
-        proxy_msg.detection_count = 0;
-        udp_server_->sendMsg(proxy_msg);
+    v1::Envelope envelope;
+    v1::PieceDetections* proxy_msg = envelope.mutable_piece_detections();
+    *proxy_msg->mutable_stamp() = offsetBy(toProto(msg->header.stamp), clock_offset_sec_);
+    proxy_msg->set_camera_serial(msg->header.frame_id);
 
-    } else {
+    if (!msg->detections.empty()) {
         // filter for greatest bbox area
-        vision_msgs::msg::Detection2D best;
-        double best_area = 0;
+        const vision_msgs::msg::Detection2D* best = &msg->detections.front();
+        double best_area = best->bbox.size_x * best->bbox.size_y;
         for (const vision_msgs::msg::Detection2D& detection : msg->detections) {
             double area = detection.bbox.size_x * detection.bbox.size_y;
 
             if (area > best_area) {
-                best = detection;
+                best = &detection;
+                best_area = area;
             }
         }
 
         // Try to find a class id match and force to unknown if unknown
         std::vector<std::string>::iterator it =
-            std::find(params_->class_names.begin(), params_->class_names.end(), best.id);
+            std::find(params_->class_names.begin(), params_->class_names.end(), best->id);
         if (it == params_->class_names.end()) {
             it = (params_->class_names.end() - 1);
         }
 
         // now convert it to the packet
-        uint8_t class_id = std::distance(params_->class_names.begin(), it);
-        ProxyVisionDetection proxy_msg;
-        proxy_msg.sec = msg->header.stamp.sec;
-        proxy_msg.nanosec = msg->header.stamp.nanosec;
-        proxy_msg.camera_serial = msg->header.frame_id;
-        proxy_msg.detection_count = 1;
-        proxy_msg.detection_idx = 0;
-        proxy_msg.class_id = class_id;
+        v1::Detection* detection = proxy_msg->add_detections();
+        detection->set_class_id(std::distance(params_->class_names.begin(), it));
 
         // theta = atan((x - cx) / fx)
-        proxy_msg.theta_x =
-            (atan((best.bbox.center.position.x - cam_info_->k.at(2)) / cam_info_->k.at(0)) / M_PI) * 180.0;
-        proxy_msg.theta_y =
-            (atan((best.bbox.center.position.y - cam_info_->k.at(5)) / cam_info_->k.at(4)) / M_PI) * 180.0;
-
-        udp_server_->sendMsg(proxy_msg);
+        detection->set_theta_x_rad(atan((best->bbox.center.position.x - cam_info_->k.at(2)) / cam_info_->k.at(0)));
+        detection->set_theta_y_rad(atan((best->bbox.center.position.y - cam_info_->k.at(5)) / cam_info_->k.at(4)));
     }
+
+    udp_server_->send(envelope);
 }
 
 void ProxyClientNode::tryConnectUdpServer() {
@@ -244,9 +258,13 @@ void ProxyClientNode::tryConnectUdpServer() {
 
         // Now setup the server to listen for incoming packets from the proxy server
         udp_server_ = std::make_unique<UdpServer>(params_->client_port, params_->server_addr, params_->server_port);
-        udp_server_->registerType<MatchInfo>(std::bind(&ProxyClientNode::matchInfoCb, this, _1));
-        udp_server_->registerType<AutoSnapshot>(std::bind(&ProxyClientNode::autosnapCb, this, _1));
-        udp_server_->registerType<SyncResponseMsg>(std::bind(&ProxyClientNode::syncResponseCb, this, _1));
+        udp_server_->registerHandler(v1::Envelope::kMatchInfo,
+                                     [this](const v1::Envelope& envelope) { matchInfoCb(envelope.match_info()); });
+        udp_server_->registerHandler(v1::Envelope::kAutoSnapshot,
+                                     [this](const v1::Envelope& envelope) { autosnapCb(envelope.auto_snapshot()); });
+        udp_server_->registerHandler(v1::Envelope::kTimesyncResponse, [this](const v1::Envelope& envelope) {
+            syncResponseCb(envelope.timesync_response());
+        });
     } catch (const std::system_error& e) {
         RCLCPP_ERROR_STREAM(get_logger(),
                             "Failed to connect to " << params_->server_addr << ":" << params_->server_port);

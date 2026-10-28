@@ -4,14 +4,22 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <array>
+#include <cstring>
 #include <system_error>
 
 namespace proxy_client {
+
+namespace {
+// Largest datagram we accept; envelopes are far smaller than one Ethernet frame
+constexpr size_t kMaxPacketSize = 1500;
+}  // namespace
+
 UdpServer::UdpServer(int local_port, const std::string &remote_addr, int remote_port) :
     remote_addr_(remote_addr), remote_port_(remote_port), local_port_(local_port) {
     // open the socket
     socket_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-    if (socket_fd_ <= 0) {
+    if (socket_fd_ < 0) {
         throw std::system_error(errno, std::system_category(), "Failed to open socket for communication");
     }
 
@@ -28,55 +36,71 @@ UdpServer::UdpServer(int local_port, const std::string &remote_addr, int remote_
     remote_addr_cfg_.sin_family = AF_INET;
 
     // bind the local port
-    if (bind(socket_fd_, (const struct sockaddr *)&local_addr_cfg_, sizeof(local_addr_cfg_)) > 0) {
-        throw std::system_error(errno, std::system_category(), "Failed to bind local socket for communication");
+    if (bind(socket_fd_, (const struct sockaddr *)&local_addr_cfg_, sizeof(local_addr_cfg_)) < 0) {
+        const int bind_errno = errno;
+        close(socket_fd_);
+        throw std::system_error(bind_errno, std::system_category(), "Failed to bind local socket for communication");
     }
 
     // make socket non blocking if blocking
     int socket_flags = fcntl(socket_fd_, F_GETFL);
     if (!(socket_flags & O_NONBLOCK)) {
         if (fcntl(socket_fd_, F_SETFL, socket_flags | O_NONBLOCK) < 0) {
-            throw std::system_error(errno, std::system_category(), "unable to set nonblocking socket");
+            const int fcntl_errno = errno;
+            close(socket_fd_);
+            throw std::system_error(fcntl_errno, std::system_category(), "unable to set nonblocking socket");
         }
     }
 }
 
-int UdpServer::processPackets() {
-    // get the data
-    std::vector<uint8_t> data;
-    data.resize(1024);
+UdpServer::~UdpServer() {
+    if (socket_fd_ >= 0) {
+        close(socket_fd_);
+    }
+}
+
+UdpServer::ReceiveResult UdpServer::processPackets() {
+    std::array<char, kMaxPacketSize> data;
 
     struct sockaddr_in cliaddr;
     memset(&cliaddr, 0, sizeof(cliaddr));
-    unsigned int cli_len = sizeof(cliaddr);
+    socklen_t cli_len = sizeof(cliaddr);
 
-    int received = recvfrom(socket_fd_, data.data(), data.size(), MSG_WAITALL, (struct sockaddr *)&cliaddr, &cli_len);
+    ssize_t received = recvfrom(socket_fd_, data.data(), data.size(), 0, (struct sockaddr *)&cliaddr, &cli_len);
 
-    // return 0 if timeout
-    if (received < 0 && errno == EWOULDBLOCK) {
-        return 0;
+    if (received < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+        return ReceiveResult::kNoPacket;
     } else if (received < 0) {
         throw std::system_error(errno, std::system_category(), "socket read failed");
-    } else {
-        // we received a packet.
     }
 
-    // Pair down the size of the vector to what we received
-    data.resize(received);
+    v1::Envelope envelope;
+    if (!envelope.ParseFromArray(data.data(), static_cast<int>(received))) {
+        return ReceiveResult::kMalformed;
+    }
+
+    if (envelope.protocol_version() != v1::PROTOCOL_VERSION_CURRENT) {
+        return ReceiveResult::kVersionMismatch;
+    }
 
     // fire the correct callback
-    sub_map_t::iterator it = sub_map_.find(data.at(0));
-    if (it != sub_map_.end()) {
-        it->second->invokeCallback(data);
+    auto it = handlers_.find(envelope.payload_case());
+    if (it == handlers_.end()) {
+        return ReceiveResult::kUnhandled;
     }
+    it->second(envelope);
 
-    return 1;
+    return ReceiveResult::kDispatched;
 }
 
-void UdpServer::sendPacket(const std::vector<uint8_t> &byte_buffer) {
-    // request to send datagram
-    // no need to specify server address in sendto
-    // connect stores the peers IP and port
+void UdpServer::registerHandler(v1::Envelope::PayloadCase payload, handler_t handler) {
+    handlers_[payload] = std::move(handler);
+}
+
+void UdpServer::send(v1::Envelope envelope) {
+    envelope.set_protocol_version(v1::PROTOCOL_VERSION_CURRENT);
+    const std::string byte_buffer = envelope.SerializeAsString();
+
     int err = sendto(socket_fd_, byte_buffer.data(), byte_buffer.size(), 0, (struct sockaddr *)&remote_addr_cfg_,
                      sizeof(remote_addr_cfg_));
     if (err < 0) {
