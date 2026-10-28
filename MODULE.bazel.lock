@@ -1642,6 +1642,7 @@
     "https://openrobotics.github.io/ros-central-registry/modules/mimick_vendor/0.9.0-3.rcr.1/source.json": "af24694d74ebb8c01b2198a8c307c4374ded2d0758877be2cdce0621ba36449e",
     "https://openrobotics.github.io/ros-central-registry/modules/nanoflann/1.5.5/MODULE.bazel": "not found",
     "https://openrobotics.github.io/ros-central-registry/modules/nasm/2.16.03.bcr.3/MODULE.bazel": "not found",
+    "https://openrobotics.github.io/ros-central-registry/modules/nav_msgs/0.0.0/MODULE.bazel": "a2efe77663ced0841a0594327a56ea6993482667f4de56adc227de1f19d9cbdd",
     "https://openrobotics.github.io/ros-central-registry/modules/nav_msgs/5.9.2-3.rcr.1/MODULE.bazel": "017120aa9f68c2563a86498b8b31f507a74f8b837469dd285ea77f60d45bf586",
     "https://openrobotics.github.io/ros-central-registry/modules/nav_msgs/5.9.2-3.rcr.1/source.json": "cf4c8d816bdde34bb5aeb7666827d567d332c5219bfa6fda7cc33e13dbc77b30",
     "https://openrobotics.github.io/ros-central-registry/modules/ncurses/6.4.20221231.bcr.11/MODULE.bazel": "not found",
@@ -2801,6 +2802,7 @@
     "https://robotics.pages.tuckers-workshop.xyz/workshop-bazel-registry/modules/mimick_vendor/0.9.0-3.rcr.1/MODULE.bazel": "not found",
     "https://robotics.pages.tuckers-workshop.xyz/workshop-bazel-registry/modules/nanoflann/1.5.5/MODULE.bazel": "not found",
     "https://robotics.pages.tuckers-workshop.xyz/workshop-bazel-registry/modules/nasm/2.16.03.bcr.3/MODULE.bazel": "not found",
+    "https://robotics.pages.tuckers-workshop.xyz/workshop-bazel-registry/modules/nav_msgs/0.0.0/MODULE.bazel": "not found",
     "https://robotics.pages.tuckers-workshop.xyz/workshop-bazel-registry/modules/nav_msgs/5.9.2-3.rcr.1/MODULE.bazel": "not found",
     "https://robotics.pages.tuckers-workshop.xyz/workshop-bazel-registry/modules/ncurses/6.4.20221231.bcr.11/MODULE.bazel": "not found",
     "https://robotics.pages.tuckers-workshop.xyz/workshop-bazel-registry/modules/nlohmann_json/3.11.3/MODULE.bazel": "not found",
@@ -3770,7 +3772,7 @@
     "@@rosdistro+//python:defs.bzl%pip_ros": {
       "general": {
         "bzlTransitiveDigest": "5XAaJvdHdp8CSH8MRNEE8L1FStPhOywjJapvBpj8UsU=",
-        "usagesDigest": "F397DjnggFhh+g8EKbMoNKGvX0xuqg0LknGgmawAi5w=",
+        "usagesDigest": "qnchV9cLD7TCYGPtFuxWPJ9FfHxL4fW8KEg32we+kPY=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},

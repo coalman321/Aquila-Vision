@@ -19,7 +19,7 @@ bool CanRunKernels(std::string* reason) {
   }
 
   // A GPU the build has no cubin or JIT-able PTX for fails here with "no kernel image is available"
-  // (not a sticky error, so the context stays usable). The default archs are Thor's; a desktop GPU
+  // (not a sticky error, so the context stays usable). The default archs are Orin's; a desktop GPU
   // needs e.g. --config=sm86 (see .bazelrc).
   ProbeKernel<<<1, 1>>>();
   cudaError_t err = cudaGetLastError();

@@ -138,17 +138,20 @@ build --strip=never
 common --repo_env=CUDA_COMPILER_USE_CC_TOOLCHAIN=true
 build --@rules_cuda//cuda:compiler=clang
 
-# CUDA code targets Jetson Thor (sm_110): cubins for it, plus its PTX so the driver can JIT for a
-# newer GPU.
-build --@rules_cuda//cuda:archs=compute_110:compute_110,sm_110
+# CUDA code targets Jetson Orin (sm_87), the deployed hardware: cubins for it, plus its PTX so the
+# driver can JIT for a newer GPU.
+build --@rules_cuda//cuda:archs=compute_87:compute_87,sm_87
+
+# Jetson Thor (sm_110) instead. Orin's cubins don't run on it, and its PTX only JITs forward.
+build:thor --@rules_cuda//cuda:archs=compute_110:compute_110,sm_110
 
 # PTX only JITs forward, so the above can't run on an older desktop GPU (the driver reports "no
 # kernel image is available"). --config=sm86 adds Ampere (RTX 30xx) cubins so CUDA tests can run on
 # a dev machine; put it in user.bazelrc. It changes every CUDA action's command line, so those miss
 # the shared cache.
-build:sm86 --@rules_cuda//cuda:archs=compute_110:compute_110,sm_110;compute_86:sm_86
+build:sm86 --@rules_cuda//cuda:archs=compute_87:compute_87,sm_87;compute_86:sm_86
 
-# CUDA's host_defines.h rejects libc++ on x86_64 only (aarch64, i.e. Thor, has no such check). This
+# CUDA's host_defines.h rejects libc++ on x86_64 only (aarch64, i.e. Jetson, has no such check). This
 # lets the AMD64 CI runner compile CUDA code; x86 CUDA binaries are not something we deploy.
 build --@rules_cuda//cuda:copts=-D_ALLOW_UNSUPPORTED_LIBCPP
 

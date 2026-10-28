@@ -1,0 +1,94 @@
+load("//basin/launch:defs.bzl", "python_env_binary")
+load("//deploy:defs.bzl", "launch_exe")
+load("//tools/runfiles_tar:defs.bzl", "runfiles_tar_pair")
+
+package(default_visibility = ["//visibility:public"])
+
+# Every executable a launch description starts, at lib/<package>/<executable>. The packages that
+# already publish theirs (basler_driver, chassis_proxy_client, pcap_recorder) are in `data` below.
+launch_exe(
+    name = "camera_web",
+    binary = "//camera_app/camera_webserver:camera_web",
+    executable = "camera_web",
+    package = "camera_webserver",
+)
+
+launch_exe(
+    name = "camera_cal",
+    binary = "//perception/camera_cal:camera_cal_main",
+    executable = "camera_cal_node",
+    package = "camera_cal",
+)
+
+launch_exe(
+    name = "webrtc_streamer",
+    binary = "//basin/web/webrtc_streamer:webrtc_streamer_node",
+    executable = "webrtc_streamer_node",
+    package = "webrtc_streamer",
+)
+
+launch_exe(
+    name = "landmark_detector",
+    binary = "//perception/apriltag_detector/landmark_detector_ros:detector_node",
+    executable = "detector_node",
+    package = "landmark_detector_ros",
+)
+
+# Not started by the shipped launch files (the entry in application.prod.py is commented out), but
+# present so enabling it is a launch file change rather than a rebuild.
+launch_exe(
+    name = "object_detector",
+    binary = "//perception/trt_detector/object_detector_ros:object_detector",
+    executable = "object_detector_node",
+    package = "object_detector_ros",
+)
+
+launch_exe(
+    name = "continuous_logger",
+    binary = "//basin/logging/continuous_logger:logger_node",
+    executable = "continuous_logger_node",
+    package = "continuous_logger",
+)
+
+# The launch node, with launch.yaml baked in, and the whole application as its runfiles.
+python_env_binary(
+    name = "aquila_launch",
+    data = [
+        ":camera_cal",
+        ":camera_web",
+        ":continuous_logger",
+        ":landmark_detector",
+        ":object_detector",
+        ":webrtc_streamer",
+        "//basin/launch/api:ament_index",
+        "//basin/logging/pcap_recorder:ament_index",
+        "//camera_app/camera_webserver:ament_index",
+        "//camera_app/chassis_proxy_client:ament_index",
+        "//drivers/basler_driver:ament_index",
+        "//perception/camera_cal:ament_index",
+        "//perception/trt_detector/object_detector_lib:tensorrt_ament_index",
+        "//perception/trt_detector/object_detector_ros:ament_index",
+        "@rosbag2_cpp//:ament_index",
+        "@rosbag2_storage//:ament_index",
+    ],
+    exe = "//basin/launch/core:launch_node_bin",
+    params_file = ":launch.yaml",
+    deps = ["//basin/launch/api:launch_api"],
+)
+
+# bazel build //deploy:aquila_vision  ->  bazel-bin/deploy/aquila_vision_release.tar.gz
+#
+# Unpacks to aquila-vision/bin/aquila_launch (the launcher) and aquila-vision/runfiles/. The release
+# archive is stripped; `:aquila_vision_debug` keeps the symbols to symbolize a crash in it.
+runfiles_tar_pair(
+    name = "aquila_vision",
+    binaries = [":aquila_launch"],
+    # Defaults only (a caller's own value wins). Everything else the processes need, they get from
+    # the launcher: RUNFILES_DIR, AMENT_PREFIX_PATH, LD_LIBRARY_PATH.
+    env = {
+        "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
+        "ROS_DISTRO": "lyrical",
+        "ROS_HOME": "/var/lib/aquila/ros",
+    },
+    package_dir = "aquila-vision",
+)

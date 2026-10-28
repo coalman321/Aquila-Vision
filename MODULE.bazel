@@ -109,6 +109,10 @@ bazel_dep(name = "cv_bridge", version = "4.1.0-3.rcr.1")
 bazel_dep(name = "image_transport", version = "6.4.9-1.rcr.1")
 bazel_dep(name = "vision_msgs", version = "4.2.0-3.rcr.1")
 
+# Referenced by //camera_app/chassis_proxy_client (Odometry). Not transitively pulled in by
+# ros_core, so "0.0.0" resolves via MVS to the RCR release's version.
+bazel_dep(name = "nav_msgs", version = "0.0.0")
+
 # Referenced by //perception/yolo_detector/object_detector_ros, which rectifies each frame with
 # image_geometry's PinholeCameraModel before running YOLO on it. Same vision_opencv release as
 # cv_bridge above; not transitively pulled in by ros_core.

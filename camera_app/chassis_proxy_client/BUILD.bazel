@@ -1,0 +1,81 @@
+load("@rosdistro//ament:defs.bzl", "ament_index")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
+
+cc_ros_library(
+    name = "proxy_client_msgs",
+    deps = [
+        "//interfaces/localization_msgs/msg:TagSolution",
+        "//interfaces/logging_msgs/msg:LogMetadata",
+        "//interfaces/logging_msgs/srv:SnapshotRequest",
+        "@builtin_interfaces//msg:Time",
+        "@geometry_msgs//msg:PoseStamped",
+        "@nav_msgs//msg:Odometry",
+        "@sensor_msgs//msg:CameraInfo",
+        "@vision_msgs//msg:Detection2DArray",
+    ],
+)
+
+# Every RCR cc_shared_library the node reaches, directly or through //basin/core/node_core.
+DYNAMIC_DEPENDENCIES = {
+    "@ament_index_cpp//:ament_index_cpp": "@ament_index_cpp//:ament_index_cpp_library",
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rclcpp_components//:rclcpp_components": "@rclcpp_components//:rclcpp_components_library",
+    "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
+    "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
+    "@tf2//:tf2": "@tf2//:tf2_library",
+    "@tf2_geometry_msgs//:tf2_geometry_msgs": "@tf2_geometry_msgs//:tf2_geometry_msgs_library",
+    "@tf2_ros//:tf2_ros": "@tf2_ros//:tf2_ros_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps",
+    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
+)
+
+# Relays detections, camera info and tag solutions to the roboRIO over UDP and takes match info,
+# snapshot requests and clock sync back. Vendored from MW-Lib's chassis_proxy_client; the message
+# codecs are .cpp files under include/, hence the glob.
+cc_binary(
+    name = "proxy_client",
+    srcs = glob([
+        "src/**/*.cpp",
+        "include/**/*.cpp",
+        "include/**/*.hpp",
+    ]),
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps"],
+        "//conditions:default": [],
+    }),
+    includes = ["include"],
+    deps = DYNAMIC_DEPENDENCIES.values() + [
+        ":proxy_client_msgs",
+        "//basin/core/node_core",
+        "@rosdistro//cc:yaml-cpp_library",
+    ],
+)
+
+# Registers the `chassis_proxy_client` ament package and publishes the executable at
+# lib/chassis_proxy_client/proxy_client for a launch description's
+# Node(package_name="chassis_proxy_client", executable="proxy_client"). `libraries` publishes the
+# message typesupport into lib/ next to it.
+ament_index(
+    name = "ament_index",
+    export_name = "chassis_proxy_client",
+    lib_data = [":proxy_client"],
+    libraries = [":proxy_client_msgs"],
+)

@@ -78,7 +78,7 @@ cc_library(
 )
 
 # Runs the whole pipeline on a GPU. Skips unless there is a device the build has kernels for: the
-# default archs are Thor's, so on a desktop GPU run it with --config=sm86 (see .bazelrc).
+# default archs are Orin's, so on a desktop GPU run it with --config=sm86 (see .bazelrc).
 cc_test(
     name = "april_detector_test",
     size = "small",

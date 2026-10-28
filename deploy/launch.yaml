@@ -1,0 +1,9 @@
+# Parameters of the launch node that supervises the whole application (see //deploy:aquila_launch).
+# application.prod.py starts a driver and an AprilTag detector per enabled camera source;
+# daemon.prod.py starts the web server, the roboRIO proxy, the WebRTC streamer and camera calibration.
+launch_node:
+  ros__parameters:
+    launch_package: camera_webserver
+    launch_file: application.prod.py
+    daemon_package: camera_webserver
+    daemon_file: daemon.prod.py
