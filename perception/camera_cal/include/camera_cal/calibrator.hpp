@@ -7,13 +7,15 @@
 namespace camera_cal {
 
 /// @brief Calibration board detection and camera calibration library.
-///        Supports standard chessboard calibration targets.
+///
+///        This base class owns everything that is independent of the target:
+///        frame collection, motion deduplication, coverage statistics,
+///        cv::calibrateCamera and YAML output.  Each supported board type
+///        (see ChessboardCalibrator, CharucoCalibrator) derives from it and
+///        implements detect().
 class CameraCalibrator {
    public:
-    /// @param board_rows  Number of internal corner rows on the calibration board
-    /// @param board_cols  Number of internal corner columns on the calibration board
-    /// @param square_size_mm  Physical side length of one square in millimetres
-    CameraCalibrator(int board_rows, int board_cols, double square_size_mm);
+    virtual ~CameraCalibrator() = default;
 
     /// @brief Attempt to detect the calibration board in an image and, if found,
     ///        store the refined corner positions for later calibration.
@@ -63,9 +65,6 @@ class CameraCalibrator {
     /// @brief Discard all previously captured frames.
     void reset();
 
-    /// @brief Reconfigure the expected board geometry.
-    void setBoard(int rows, int cols, double square_size_mm);
-
     /// @brief Per-frame and per-session coverage statistics derived from
     ///        the image points captured so far.
     struct CoverageStats {
@@ -83,12 +82,33 @@ class CameraCalibrator {
     /// @return Populated CoverageStats, or a zeroed struct if no frames exist
     CoverageStats getCoverageStats(cv::Size image_size) const;
 
-   private:
-    int board_rows_;
-    int board_cols_;
-    double square_size_mm_;
+   protected:
+    CameraCalibrator() = default;
 
+    /// @brief The board as seen in a single frame.
+    struct Detection {
+        /// Detected corners in full-resolution pixel coordinates
+        std::vector<cv::Point2f> image_points;
+        /// Matching corner positions in the board frame (metres, z = 0)
+        std::vector<cv::Point3f> object_points;
+        /// Absolute angle (radians) of the board x-axis relative to the image horizontal
+        float skew{ 0.0f };
+    };
+
+    /// @brief Find the board in one frame.
+    /// @param detect_image  Mono8 image to run the detector on, downscaled by @p scale
+    /// @param full_image    The original mono8 image, for sub-pixel refinement
+    /// @param scale         Factor @p full_image was resized by to give @p detect_image (<= 1)
+    /// @param debug         Full-resolution BGR image to draw the detection result onto
+    /// @param out           Filled in when the board is found
+    /// @return true if the board was found
+    virtual bool detect(const cv::Mat& detect_image, const cv::Mat& full_image, double scale, cv::Mat& debug,
+                        Detection& out) = 0;
+
+   private:
     std::vector<std::vector<cv::Point2f>> image_points_;
+    std::vector<std::vector<cv::Point3f>> object_points_;
+    std::vector<float> frame_skews_;
     cv::Mat last_debug_image_;
 
     // ----- Motion deduplication state -----
@@ -102,8 +122,10 @@ class CameraCalibrator {
     /// Minimum span change as a fraction of the previous span.
     float motion_scale_threshold_{ 0.15f };
 
-    /// @brief Build the 3-D object point grid for one board pose.
-    std::vector<cv::Point3f> getBoardObjectPoints() const;
+    /// @brief Apply motion deduplication to a detection, updating the last-accepted
+    ///        pose when it passes.
+    /// @return true if the board moved enough relative to the last accepted frame
+    bool acceptMotion(const std::vector<cv::Point2f>& corners);
 };
 
 }  // namespace camera_cal

@@ -12,14 +12,8 @@
 
 namespace camera_cal {
 
-CameraCalibrator::CameraCalibrator(int board_rows, int board_cols, double square_size_mm) :
-    board_rows_(board_rows), board_cols_(board_cols), square_size_mm_(square_size_mm) {}
-
 bool CameraCalibrator::detectAndCapture(const cv::Mat& image) {
-    cv::Size board_size(board_cols_, board_rows_);
-    std::vector<cv::Point2f> corners;
-
-    // Downscale to at most 1280 px wide before running the corner detector.
+    // Downscale to at most 1280 px wide before running the board detector.
     // findChessboardCorners is O(n^2) in pixel count and can take 10+ seconds
     // on a full-resolution Pylon/Basler frame without this.
     constexpr int kMaxDetectWidth = 1280;
@@ -29,8 +23,8 @@ bool CameraCalibrator::detectAndCapture(const cv::Mat& image) {
 #ifdef CAMERA_CAL_HAVE_CUDA
     {
         // Upload once; resize, equalizeHist, and cvtColor all happen on the GPU.
-        // equalizeHist corresponds to CALIB_CB_NORMALIZE_IMAGE so we omit that
-        // flag when calling findChessboardCornersSB below.
+        // equalizeHist corresponds to CALIB_CB_NORMALIZE_IMAGE so the chessboard
+        // detector omits that flag on this path.
         cv::cuda::GpuMat gpu_src;
         gpu_src.upload(image);
 
@@ -60,71 +54,55 @@ bool CameraCalibrator::detectAndCapture(const cv::Mat& image) {
     cv::cvtColor(image, last_debug_image_, cv::COLOR_GRAY2BGR);
 #endif
 
-    // findChessboardCornersSB (Saddle-point Based) is faster than the classic
-    // detector and returns sub-pixel corners directly, so no cornerSubPix step
-    // is needed.  CALIB_CB_NORMALIZE_IMAGE is omitted on the CUDA path because
-    // equalizeHist was already applied on the GPU above.
-#ifdef CAMERA_CAL_HAVE_CUDA
-    constexpr int kDetectFlags = 0;  // normalization already done on GPU
-#else
-    constexpr int kDetectFlags = cv::CALIB_CB_NORMALIZE_IMAGE;
-#endif
-    const bool found = cv::findChessboardCornersSB(detect_image, board_size, corners, kDetectFlags);
-
-    if (found) {
-        // Scale corners back to original resolution
-        if (scale < 1.0) {
-            for (auto& pt : corners) {
-                pt.x /= scale;
-                pt.y /= scale;
-            }
-        }
-
-        // findChessboardCornersSB already provides sub-pixel accuracy –
-        // no separate cornerSubPix call required.
-
-        // ---- Motion deduplication ----------------------------------------
-        // Compute centroid and bounding-box diagonal of detected corners.
-        cv::Point2f centroid(0.0f, 0.0f);
-        float bx_min = corners[0].x, bx_max = corners[0].x;
-        float by_min = corners[0].y, by_max = corners[0].y;
-        for (const auto& pt : corners) {
-            centroid.x += pt.x;
-            centroid.y += pt.y;
-            bx_min = std::min(bx_min, pt.x);
-            bx_max = std::max(bx_max, pt.x);
-            by_min = std::min(by_min, pt.y);
-            by_max = std::max(by_max, pt.y);
-        }
-        centroid.x /= static_cast<float>(corners.size());
-        centroid.y /= static_cast<float>(corners.size());
-        const float span = std::sqrt((bx_max - bx_min) * (bx_max - bx_min) +
-                                     (by_max - by_min) * (by_max - by_min));
-
-        if (last_accepted_span_ >= 0.0f && span > 0.0f) {
-            const float dx = centroid.x - last_accepted_centroid_.x;
-            const float dy = centroid.y - last_accepted_centroid_.y;
-            const float position_fraction = std::sqrt(dx * dx + dy * dy) / last_accepted_span_;
-            const float scale_fraction = std::abs(span - last_accepted_span_) / last_accepted_span_;
-
-            if (position_fraction < motion_position_threshold_ &&
-                scale_fraction < motion_scale_threshold_) {
-                // Board hasn't moved enough – treat as a duplicate and drop.
-                cv::drawChessboardCorners(last_debug_image_, board_size, corners, found);
-                return false;
-            }
-        }
-
-        last_accepted_centroid_ = centroid;
-        last_accepted_span_ = span;
-        // -----------------------------------------------------------------
-
-        image_points_.push_back(corners);
+    Detection detection;
+    if (!detect(detect_image, image, scale, last_debug_image_, detection) || detection.image_points.empty()) {
+        return false;
     }
 
-    cv::drawChessboardCorners(last_debug_image_, board_size, corners, found);
+    if (!acceptMotion(detection.image_points)) {
+        // Board hasn't moved enough – treat as a duplicate and drop.
+        return false;
+    }
 
-    return found;
+    image_points_.push_back(std::move(detection.image_points));
+    object_points_.push_back(std::move(detection.object_points));
+    frame_skews_.push_back(detection.skew);
+    return true;
+}
+
+bool CameraCalibrator::acceptMotion(const std::vector<cv::Point2f>& corners) {
+    // Compute centroid and bounding-box diagonal of detected corners.
+    cv::Point2f centroid(0.0f, 0.0f);
+    float bx_min = corners[0].x, bx_max = corners[0].x;
+    float by_min = corners[0].y, by_max = corners[0].y;
+    for (const auto& pt : corners) {
+        centroid.x += pt.x;
+        centroid.y += pt.y;
+        bx_min = std::min(bx_min, pt.x);
+        bx_max = std::max(bx_max, pt.x);
+        by_min = std::min(by_min, pt.y);
+        by_max = std::max(by_max, pt.y);
+    }
+    centroid.x /= static_cast<float>(corners.size());
+    centroid.y /= static_cast<float>(corners.size());
+    const float span = std::sqrt((bx_max - bx_min) * (bx_max - bx_min) +
+                                 (by_max - by_min) * (by_max - by_min));
+
+    if (last_accepted_span_ >= 0.0f && span > 0.0f) {
+        const float dx = centroid.x - last_accepted_centroid_.x;
+        const float dy = centroid.y - last_accepted_centroid_.y;
+        const float position_fraction = std::sqrt(dx * dx + dy * dy) / last_accepted_span_;
+        const float scale_fraction = std::abs(span - last_accepted_span_) / last_accepted_span_;
+
+        if (position_fraction < motion_position_threshold_ &&
+            scale_fraction < motion_scale_threshold_) {
+            return false;
+        }
+    }
+
+    last_accepted_centroid_ = centroid;
+    last_accepted_span_ = span;
+    return true;
 }
 
 cv::Mat CameraCalibrator::getDebugImage() const { return last_debug_image_; }
@@ -136,11 +114,9 @@ double CameraCalibrator::calibrate(cv::Size image_size, cv::Mat& camera_matrix, 
         return -1.0;
     }
 
-    const std::vector<std::vector<cv::Point3f>> object_points(image_points_.size(), getBoardObjectPoints());
-
     std::vector<cv::Mat> rvecs, tvecs;
     const double rms =
-        cv::calibrateCamera(object_points, image_points_, image_size, camera_matrix, dist_coeffs, rvecs, tvecs);
+        cv::calibrateCamera(object_points_, image_points_, image_size, camera_matrix, dist_coeffs, rvecs, tvecs);
 
     return rms;
 }
@@ -219,6 +195,8 @@ bool CameraCalibrator::saveCalibration(const std::string& directory, const std::
 
 void CameraCalibrator::reset() {
     image_points_.clear();
+    object_points_.clear();
+    frame_skews_.clear();
     last_debug_image_.release();
     last_accepted_span_ = -1.0f;
     last_accepted_centroid_ = cv::Point2f(0.0f, 0.0f);
@@ -227,12 +205,6 @@ void CameraCalibrator::reset() {
 void CameraCalibrator::setMotionThresholds(float position_fraction, float scale_fraction) {
     motion_position_threshold_ = position_fraction;
     motion_scale_threshold_ = scale_fraction;
-}
-
-void CameraCalibrator::setBoard(int rows, int cols, double square_size_mm) {
-    board_rows_ = rows;
-    board_cols_ = cols;
-    square_size_mm_ = square_size_mm;
 }
 
 CameraCalibrator::CoverageStats CameraCalibrator::getCoverageStats(cv::Size image_size) const {
@@ -251,6 +223,10 @@ CameraCalibrator::CoverageStats CameraCalibrator::getCoverageStats(cv::Size imag
     stats.min_y = 1.0f;
     stats.max_y = -1.0f;
 
+    for (const float skew : frame_skews_) {
+        stats.max_skew = std::max(stats.max_skew, skew);
+    }
+
     for (const auto& corners : image_points_) {
         // --- x/y coverage ---
         for (const auto& pt : corners) {
@@ -260,14 +236,6 @@ CameraCalibrator::CoverageStats CameraCalibrator::getCoverageStats(cv::Size imag
             stats.max_x = std::max(stats.max_x, nx);
             stats.min_y = std::min(stats.min_y, ny);
             stats.max_y = std::max(stats.max_y, ny);
-        }
-
-        // --- skew: angle of board first row relative to horizontal ---
-        if (static_cast<int>(corners.size()) >= board_cols_) {
-            const cv::Point2f& p0 = corners[0];
-            const cv::Point2f& p1 = corners[board_cols_ - 1];
-            const float angle = std::abs(std::atan2(p1.y - p0.y, p1.x - p0.x));
-            stats.max_skew = std::max(stats.max_skew, angle);
         }
 
         // --- scale: board span normalised by image diagonal ---
@@ -286,18 +254,6 @@ CameraCalibrator::CoverageStats CameraCalibrator::getCoverageStats(cv::Size imag
     }
 
     return stats;
-}
-
-std::vector<cv::Point3f> CameraCalibrator::getBoardObjectPoints() const {
-    std::vector<cv::Point3f> points;
-    points.reserve(board_rows_ * board_cols_);
-    for (int r = 0; r < board_rows_; ++r) {
-        for (int c = 0; c < board_cols_; ++c) {
-            points.emplace_back(static_cast<float>(c) * static_cast<float>(square_size_mm_),
-                                static_cast<float>(r) * static_cast<float>(square_size_mm_), 0.0f);
-        }
-    }
-    return points;
 }
 
 }  // namespace camera_cal

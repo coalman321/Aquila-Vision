@@ -2,6 +2,11 @@
 
 #include <cv_bridge/cv_bridge.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <iomanip>
+#include <sstream>
+
+#include "camera_cal/charuco_calibrator.hpp"
+#include "camera_cal/chessboard_calibrator.hpp"
 
 using namespace std::placeholders;
 using CalRequest = calibration_msgs::srv::CamCalRequest;
@@ -33,13 +38,12 @@ CameraCalNode::CameraCalNode(const rclcpp::NodeOptions& options) :
 
     RCLCPP_INFO(get_logger(),
                 "Camera calibration node started\n"
-                "  board               : %d rows x %d cols\n"
                 "  min_captures        : %d\n"
                 "  output_dir         : %s\n"
                 "  motion_pos_thresh   : %.2f (fraction of board diagonal)\n"
                 "  motion_scale_thresh : %.2f (relative span change)\n"
                 "  Send REQ_START_CAL on 'camera_cal/request' to begin.",
-                params_->board_rows, params_->board_cols, params_->min_captures,
+                params_->min_captures,
                 params_->output_dir.c_str(),
                 params_->motion_position_threshold, params_->motion_scale_threshold);
 
@@ -67,7 +71,15 @@ void CameraCalNode::calRequestCallback(const CalRequest::Request::SharedPtr req,
                 RCLCPP_WARN(get_logger(), "%s", resp->err_msg.c_str());
                 return;
             }
-    
+
+            std::string board_err;
+            auto calibrator = makeCalibrator(*req, board_err);
+            if (!calibrator) {
+                resp->err_code = CalRequest::Response::ERR_INVLD_BOARD;
+                resp->err_msg = "Invalid board: " + board_err;
+                RCLCPP_WARN(get_logger(), "%s", resp->err_msg.c_str());
+                return;
+            }
 
             active_camera_name_ = req->camera_name;
             active_topic_name_ = req->image_topic;
@@ -76,8 +88,7 @@ void CameraCalNode::calRequestCallback(const CalRequest::Request::SharedPtr req,
             last_rms_ = -1.0f;
             last_cal_samples_ = 0;
 
-            calibrator_ =
-                std::make_unique<CameraCalibrator>(params_->board_rows, params_->board_cols, req->edge_len / 1000.0f);
+            calibrator_ = std::move(calibrator);
             calibrator_->setMotionThresholds(static_cast<float>(params_->motion_position_threshold),
                                              static_cast<float>(params_->motion_scale_threshold));
 
@@ -89,8 +100,18 @@ void CameraCalNode::calRequestCallback(const CalRequest::Request::SharedPtr req,
             resp->session_id = new_session_id;
 
             resp->err_code = CalRequest::Response::ERR_OK;
-            resp->err_msg =
-                "Calibration started for camera '" + active_camera_name_ + "' on topic '" + active_topic_name_ + "' with edge length " + std::to_string(req->edge_len) + "m";
+            std::ostringstream board_desc;
+            board_desc << std::fixed << std::setprecision(4);
+            if (req->board_type == CalRequest::Request::BOARD_CHARUCO) {
+                board_desc << "charuco " << req->board_rows << "x" << req->board_cols << " " << req->aruco_dict
+                           << " sq=" << req->edge_len << "m mk=" << req->marker_len << "m"
+                           << (req->charuco_legacy_pattern ? " (legacy)" : "");
+            } else {
+                board_desc << "chessboard " << req->board_rows << "x" << req->board_cols << " sq=" << req->edge_len
+                           << "m";
+            }
+            resp->err_msg = "Calibration started for camera '" + active_camera_name_ + "' on topic '" +
+                            active_topic_name_ + "' with " + board_desc.str();
             RCLCPP_INFO(get_logger(), "%s", resp->err_msg.c_str());
             break;
         }
@@ -208,6 +229,34 @@ void CameraCalNode::calRequestCallback(const CalRequest::Request::SharedPtr req,
             resp->err_msg = "Unknown request_id: " + std::to_string(req->request_id);
             RCLCPP_WARN(get_logger(), "%s", resp->err_msg.c_str());
             break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+std::unique_ptr<CameraCalibrator> CameraCalNode::makeCalibrator(const CalRequest::Request& req,
+                                                                std::string& err) const {
+    switch (req.board_type) {
+        case CalRequest::Request::BOARD_CHESSBOARD: {
+            const ChessboardCalibrator::Config config{ req.board_rows, req.board_cols, req.edge_len };
+            if (const auto e = ChessboardCalibrator::validate(config)) {
+                err = *e;
+                return nullptr;
+            }
+            return std::make_unique<ChessboardCalibrator>(config);
+        }
+        case CalRequest::Request::BOARD_CHARUCO: {
+            const CharucoCalibrator::Config config{ req.board_rows,  req.board_cols, req.edge_len,
+                                                    req.marker_len,  req.aruco_dict, req.charuco_legacy_pattern };
+            if (const auto e = CharucoCalibrator::validate(config)) {
+                err = *e;
+                return nullptr;
+            }
+            return std::make_unique<CharucoCalibrator>(config);
+        }
+        default:
+            err = "Unknown board_type: " + std::to_string(req.board_type);
+            return nullptr;
     }
 }
 

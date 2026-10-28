@@ -1,6 +1,7 @@
 #include "camera_webserver/calibration/calibration_handler.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <rclcpp/logging.hpp>
 
@@ -68,7 +69,8 @@ CalibrationHandler::CalibrationHandler(std::shared_ptr<basin::web_core::WebNode>
     });
 
     // POST /api/calibration/start
-    // Required body: { "camera_name": "..." }
+    // Required body: { "camera_name", "board_type", "board_rows", "board_cols" } plus optional
+    // edge/marker lengths, aruco_dict and legacy_pattern (see calibration_handler.hpp).
     // The image topic is derived as /<camera_name>/driver/image_raw.
     web_node->getServer().Post("/api/calibration/start", [this](const httplib::Request& req, httplib::Response& res) {
         auto request = std::make_shared<CamCalRequest::Request>();
@@ -94,6 +96,46 @@ CalibrationHandler::CalibrationHandler(std::shared_ptr<basin::web_core::WebNode>
                 return;
             }
             request->edge_len = static_cast<float>(edge_length_mm / 1000.0);
+
+            // Board type and geometry. Only types are checked here; camera_cal_node
+            // validates the geometry and reports problems as ERR_INVLD_BOARD.
+            if (!body.contains("board_type") || !body["board_type"].is_string()) {
+                res.status = 400;
+                res.set_content("{\"error\": \"Missing required field: board_type\"}", "application/json");
+                return;
+            }
+            const auto board_type = body["board_type"].get<std::string>();
+            if (board_type == "chessboard") {
+                request->board_type = CamCalRequest::Request::BOARD_CHESSBOARD;
+            } else if (board_type == "charuco") {
+                request->board_type = CamCalRequest::Request::BOARD_CHARUCO;
+            } else {
+                res.status = 400;
+                res.set_content("{\"error\": \"board_type must be 'chessboard' or 'charuco'\"}", "application/json");
+                return;
+            }
+
+            for (const char* field : { "board_rows", "board_cols" }) {
+                if (!body.contains(field) || !body[field].is_number_unsigned() ||
+                    body[field].get<uint64_t>() > std::numeric_limits<uint16_t>::max()) {
+                    res.status = 400;
+                    res.set_content(json{ { "error", std::string("Missing or invalid field: ") + field } }.dump(),
+                                    "application/json");
+                    return;
+                }
+            }
+            request->board_rows = body["board_rows"].get<uint16_t>();
+            request->board_cols = body["board_cols"].get<uint16_t>();
+
+            if (body.contains("marker_length_mm") && body["marker_length_mm"].is_number()) {
+                request->marker_len = static_cast<float>(body["marker_length_mm"].get<double>() / 1000.0);
+            }
+            if (body.contains("aruco_dict") && body["aruco_dict"].is_string()) {
+                request->aruco_dict = body["aruco_dict"].get<std::string>();
+            }
+            if (body.contains("legacy_pattern") && body["legacy_pattern"].is_boolean()) {
+                request->charuco_legacy_pattern = body["legacy_pattern"].get<bool>();
+            }
         } catch (const std::exception& e) {
             RCLCPP_WARN(logger_, "Failed to parse start request body: %s", e.what());
             res.status = 400;
@@ -113,8 +155,9 @@ CalibrationHandler::CalibrationHandler(std::shared_ptr<basin::web_core::WebNode>
         // Derive image topic from camera name.
         request->image_topic = imageTopicForCamera(request->camera_name);
 
-        RCLCPP_INFO(logger_, "Calling REQ_START_CAL (topic='%s', camera='%s', edge_len=%.5f m)",
-                    request->image_topic.c_str(), request->camera_name.c_str(), request->edge_len);
+        RCLCPP_INFO(logger_, "Calling REQ_START_CAL (topic='%s', camera='%s', board_type=%u, %ux%u, edge_len=%.5f m)",
+                    request->image_topic.c_str(), request->camera_name.c_str(), request->board_type,
+                    request->board_rows, request->board_cols, request->edge_len);
 
         auto response = callService(request);
         if (!response) {

@@ -37,8 +37,19 @@ struct CalibrationHandlerConfig {
 ///       Returns the most recently received CamCalStatus as JSON.
 ///
 ///   POST /api/calibration/start
-///       Body (required JSON): { "camera_name": "...", "edge_length_mm": <float> }
-///       edge_length_mm is optional and defaults to 22.86 mm (0.02286 m).
+///       Body (required JSON):
+///         {
+///           "camera_name":      "...",                       (required)
+///           "board_type":       "chessboard" | "charuco",    (required)
+///           "board_rows":       <uint>,                      (required)
+///           "board_cols":       <uint>,                      (required)
+///           "edge_length_mm":   <float>,   square edge, defaults to 22.86 mm
+///           "marker_length_mm": <float>,   charuco only
+///           "aruco_dict":       "DICT_5X5_100", charuco only
+///           "legacy_pattern":   <bool>     charuco only, defaults to false
+///         }
+///       Rows/cols are internal corners for a chessboard and squares for a
+///       ChArUco board.  Board geometry is validated by camera_cal_node.
 ///       Derives the image topic as /<camera_name>/driver/image_raw and calls
 ///       REQ_START_CAL on the camera_cal/request service.
 ///
