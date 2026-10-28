@@ -134,6 +134,9 @@ def _strip(ctx, entries, files):
 
 def _runfiles_tar_impl(ctx):
     candidates, repo_mappings, empty_names = _collect(ctx)
+    for dest in list(candidates):
+        if [x for x in ctx.attr.exclude if x in dest]:
+            candidates.pop(dest)
     inputs = []
     entries = []
     files = {}
@@ -341,6 +344,11 @@ runfiles_tar = rule(
         ),
         "package_dir": attr.string(
             doc = "Directory everything in the archive is placed under.",
+        ),
+        "exclude": attr.string_list(
+            doc = """Files left out of the archive: any runfiles path (as in `runfiles/<repo>/<path>`,
+            without the `runfiles/`) that contains one of these strings. For dead weight in a third-party
+            repository that the binaries would otherwise drag along.""",
         ),
         "compression_level": attr.int(
             default = 6,

@@ -152,6 +152,9 @@ cc_test(
     ],
 )
 
+# The smallest of the synthetic models, for //deploy:detector_check to build an engine from on a device.
+exports_files(["test/testdata/rfdetr_detect_4_classes.onnx"])
+
 # Loads the synthetic models in test/testdata (see make_test_models.py for what they emit) and checks
 # the detections exactly: box decoding, letterboxing, thresholds, NMS, segmentation masks and engine
 # caching. Skips unless there is a GPU the build has kernels for (see //tools/cuda_test).

@@ -4,6 +4,12 @@ load("//tools/runfiles_tar:defs.bzl", "runfiles_tar_pair")
 
 package(default_visibility = ["//visibility:public"])
 
+# --config=thor (.bazelrc)
+config_setting(
+    name = "thor",
+    define_values = {"aquila_target": "thor"},
+)
+
 # Every executable a launch description starts, at lib/<package>/<executable>. The packages that
 # already publish theirs (basler_driver, chassis_proxy_client) are in `data` below,
 # along with the binaries themselves: ament_index's lib_data places the executable alone, so
@@ -84,6 +90,8 @@ python_env_binary(
         "//perception/trt_detector/object_detector_ros:ament_index",
         "@rosbag2_cpp//:ament_index",
         "@rosbag2_storage//:ament_index",
+        # A tiny synthetic RF-DETR model for checking TensorRT on a device (see the README).
+        "//perception/trt_detector/object_detector_lib:test/testdata/rfdetr_detect_4_classes.onnx",
     ],
     exe = "//basin/launch/core:launch_node_bin",
     params_file = ":launch.yaml",
@@ -96,7 +104,27 @@ python_env_binary(
 # archive is stripped; `:aquila_vision_debug` keeps the symbols to symbolize a crash in it.
 runfiles_tar_pair(
     name = "aquila_vision",
-    binaries = [":aquila_launch"],
+    binaries = [
+        ":aquila_launch",
+        # Run by hand on a device to check TensorRT (bin/object_detector); see the README.
+        "//perception/trt_detector/object_detector_ros:object_detector",
+    ],
+    # TensorRT's builder resources are one ~200-450 MB library per GPU architecture. On an Orin Nano
+    # (sm_87) TensorRT 10.16.1 loads only the sm86 one (checked with strace while building an engine), so
+    # the rest are left out. Thor keeps them all until the same check is made there.
+    exclude = select({
+        ":thor": [],
+        "//conditions:default": [
+            "libnvinfer_builder_resource_ptx",
+            "libnvinfer_builder_resource_sm75",
+            "libnvinfer_builder_resource_sm80",
+            "libnvinfer_builder_resource_sm89",
+            "libnvinfer_builder_resource_sm90",
+            "libnvinfer_builder_resource_sm100",
+            "libnvinfer_builder_resource_sm110",
+            "libnvinfer_builder_resource_sm120",
+        ],
+    }),
     # Defaults only (a caller's own value wins). Everything else the processes need, they get from
     # the launcher: RUNFILES_DIR, AMENT_PREFIX_PATH, LD_LIBRARY_PATH.
     env = {

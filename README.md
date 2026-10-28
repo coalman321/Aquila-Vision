@@ -131,6 +131,23 @@ The tarball also holds `object_detector_node` (TensorRT), `continuous_logger_nod
 which no shipped launch description starts: enable them by editing a launch file, not by rebuilding.
 Each process's output goes to `/dev/shm/<name>.out`; the service's own is in `journalctl -u aquila-vision`.
 
+### Checking TensorRT on a device
+
+The archive carries `bin/object_detector` (the detector node on its own, no launch node) and a tiny
+synthetic RF-DETR model. Loading a model converts it to an engine next to it, and the release tree is
+read-only, so copy the model somewhere writable first. `ROS_HOME` defaults to the service user's
+directory, so point it somewhere you can write when running as yourself:
+
+```
+cp /opt/aquila-vision/current/runfiles/_main/perception/trt_detector/object_detector_lib/test/testdata/rfdetr_detect_4_classes.onnx /tmp/
+ROS_HOME=/tmp/ros /opt/aquila-vision/current/bin/object_detector --ros-args \
+    -p network_path:=/tmp/rfdetr_detect_4_classes.onnx -p model_architecture:=rfdetr
+```
+
+"Detector node loaded" means the engine built. To see which TensorRT builder resource it used, run it
+under `strace -f -e trace=openat ... 2>&1 | grep builder_resource`. Stop `aquila-vision.service` first if
+it is running the detector.
+
 ### Things to know
 
 - **Every launchable executable is `lib/<package>/<executable>`** in the tree (what launch descriptions
@@ -141,7 +158,8 @@ Each process's output goes to `/dev/shm/<name>.out`; the service's own is in `jo
   engines between machines or TensorRT versions. The tarball has TensorRT 10.16.1 and JetPack 7.2.1 ships
   10.16.2 (CUDA 13.2.1 against 13.2.2): the same minor releases, but run `//tools/cuda_smoke` and an
   engine build on the first device.
-- The tarball is mostly TensorRT. The `libnvinfer_builder_resource_*` files for architectures other than
-  the Orin's make up well over a gigabyte; they can be pruned from the archive once it's confirmed on a
-  device which resource TensorRT loads on `sm_87`.
+- The tarball is mostly TensorRT. Its `libnvinfer_builder_resource_*` files are one library per GPU
+  architecture. On the Orin Nano TensorRT 10.16.1 loads only the `sm86` one (seen with `strace` during an
+  engine build), so `exclude` in [deploy/BUILD.bazel](deploy/BUILD.bazel) drops all the others. Recheck
+  that after a TensorRT upgrade. `--config=thor` prunes nothing.
 - `webrtc_streamer_node` throws "rcl node's context is invalid" while shutting down.

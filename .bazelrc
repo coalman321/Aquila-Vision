@@ -144,6 +144,7 @@ build --@rules_cuda//cuda:archs=compute_87:compute_87,sm_87
 
 # Jetson Thor (sm_110) instead. Orin's cubins don't run on it, and its PTX only JITs forward.
 build:thor --@rules_cuda//cuda:archs=compute_110:compute_110,sm_110
+build:thor --define=aquila_target=thor
 
 # PTX only JITs forward, so the above can't run on an older desktop GPU (the driver reports "no
 # kernel image is available"). --config=sm86 adds Ampere (RTX 30xx) cubins so CUDA tests can run on
