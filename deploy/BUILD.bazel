@@ -5,7 +5,9 @@ load("//tools/runfiles_tar:defs.bzl", "runfiles_tar_pair")
 package(default_visibility = ["//visibility:public"])
 
 # Every executable a launch description starts, at lib/<package>/<executable>. The packages that
-# already publish theirs (basler_driver, chassis_proxy_client, pcap_recorder) are in `data` below.
+# already publish theirs (basler_driver, chassis_proxy_client) are in `data` below,
+# along with the binaries themselves: ament_index's lib_data places the executable alone, so
+# without them its shared libraries (the _solib directory) wouldn't be in the archive.
 launch_exe(
     name = "camera_web",
     binary = "//camera_app/camera_webserver:camera_web",
@@ -50,6 +52,16 @@ launch_exe(
     package = "continuous_logger",
 )
 
+# Not in the shipped launch files either. Its bundled tcpdump is found through the runfiles, so unlike
+# //basin/logging/pcap_recorder:ament_index this doesn't also put tcpdump under lib/. (That one
+# publishes the executable alone, and at a path whose depth breaks the binary's relative RUNPATH.)
+launch_exe(
+    name = "pcap_recorder",
+    binary = "//basin/logging/pcap_recorder:pcap_recorder_node",
+    executable = "pcap_recorder_node",
+    package = "pcap_recorder",
+)
+
 # The launch node, with launch.yaml baked in, and the whole application as its runfiles.
 python_env_binary(
     name = "aquila_launch",
@@ -59,12 +71,14 @@ python_env_binary(
         ":continuous_logger",
         ":landmark_detector",
         ":object_detector",
+        ":pcap_recorder",
         ":webrtc_streamer",
         "//basin/launch/api:ament_index",
-        "//basin/logging/pcap_recorder:ament_index",
         "//camera_app/camera_webserver:ament_index",
         "//camera_app/chassis_proxy_client:ament_index",
+        "//camera_app/chassis_proxy_client:proxy_client",
         "//drivers/basler_driver:ament_index",
+        "//drivers/basler_driver:basler_driver",
         "//perception/camera_cal:ament_index",
         "//perception/trt_detector/object_detector_lib:tensorrt_ament_index",
         "//perception/trt_detector/object_detector_ros:ament_index",

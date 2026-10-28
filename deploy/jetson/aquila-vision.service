@@ -1,0 +1,31 @@
+[Unit]
+Description=Aquila Vision
+After=network-online.target aquila-runtime.service
+Wants=network-online.target
+
+[Service]
+User=aquila
+Group=aquila
+# Cameras (USB3 Vision), the GPU and serial devices.
+SupplementaryGroups=video render plugdev dialout
+EnvironmentFile=-/etc/aquila/env
+Environment=HOME=/var/lib/aquila
+WorkingDirectory=/var/lib/aquila
+# The launch node starts and supervises every other process; bin/aquila_launch is the tarball's
+# launcher, which exports what the tree needs (RUNFILES_DIR, AMENT_PREFIX_PATH, LD_LIBRARY_PATH).
+ExecStart=/opt/aquila-vision/current/bin/aquila_launch
+# SIGINT is what rclcpp shuts down gracefully on, and the launch node then stops its children.
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=3
+
+# pcap_recorder's bundled tcpdump captures packets, and a tarball can't carry file capabilities;
+# ambient capabilities pass to the processes the launch node starts.
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+LimitMEMLOCK=infinity
+LimitRTPRIO=99
+
+[Install]
+WantedBy=multi-user.target

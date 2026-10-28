@@ -36,5 +36,6 @@ The camera webserver stack, vendored from the standalone
 - `launch/base.launch.py` is the old `ros2 launch` entry for `production_launch`, which no longer exists; it
   isn't used by anything.
 - The `exec_depend`s in the old `package.xml` (`webrtc_streamer`, `landmark_detector_ros`, `chassis_proxy_client`,
-  ...) are only named by `application.prod.py`/`daemon.prod.py`. `chassis_proxy_client` is not in this
-  workspace.
+  ...) are only named by `application.prod.py`/`daemon.prod.py`. `chassis_proxy_client` is
+  vendored at [chassis_proxy_client](chassis_proxy_client/). The whole stack ships to a Jetson as the
+  tarball described in [README](../README.md#deploying-to-a-jetson).
