@@ -6,6 +6,17 @@ roboRIO over UDP. A web UI configures camera sources, pipelines, field maps and 
 live video over WebRTC. It is built with Bazel on ROS 2 Lyrical and the in-house `basin` libraries, and
 deployed as a single tarball.
 
+## Development
+
+Generate `compile_commands.json` for clangd and clang-tidy with:
+
+```
+bazel run //:refresh_compile_commands
+```
+
+Rerun it after adding or removing source files or changing build flags. External sources (ROS, LLVM) are
+left out; see [BUILD.bazel](BUILD.bazel).
+
 ## Deploying to a Jetson
 
 Aquila Vision ships as one tarball that runs on a **Jetson Orin Nano with JetPack 7.2.1** (Jetson Linux
