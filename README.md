@@ -55,8 +55,9 @@ Each process's output goes to `/dev/shm/<name>.out`; the service's own is in `jo
 `continuous_logger_node` records to `/var/lib/aquila/logs` (`AQUILA_LOG_DIR` in `/etc/aquila/env` overrides
 it). Each service start opens a new `log_<n>/` directory of MCAP files, split every 30 s, with `snapshots.yaml`
 beside them. It records the tag solutions, `/rosout`, `/tf`, `/tf_static`, and every camera's `camera_info` and
-AprilTag debug image (1 in 9). Cameras enabled after startup are picked up without a restart. A `match_start`
-event from the roboRIO snapshots that match (5 s before to 2.5 min after). Snapshots are kept; once the disk
+AprilTag debug image (1 in 9). Cameras enabled after startup are picked up without a restart. When the
+roboRIO sends its match info (`ProxyServerThread.syncMatchData()`, called at match start), `proxy_client`
+raises a `match_start` event, which snapshots that match (5 s before to 2.5 min after). Snapshots are kept; once the disk
 is 60% full, the oldest other logs are deleted.
 
 Copy them off with:

@@ -130,7 +130,7 @@ def generate_launch_description() -> list:
                     "event_snapshots": {
                         "match_start": {
                             "event_name": "match_start",
-                            "time_before": 5.0,
+                            "time_before": 10.0,
                             "time_after": 2.5 * 60.0,  # 2.5 minutes after match start
                             "tags": ["match", "frc"],
                             "description": "",
