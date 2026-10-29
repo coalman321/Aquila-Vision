@@ -53,7 +53,7 @@ def create_pipeline(filename: os.PathLike, source_config: dict) -> list:
                         # configure image settings
                         "exposure_auto": False,
                         "gain_auto": False,
-                        "gain": pipeline_config.get("gain", 0.5),
+                        "gain": pipeline_config.get("gain", 0.0),
                         "exposure": pipeline_config.get("exposure", 1000.0),
                         "image_encoding": "rgb8",
                         "frame_rate": float(source_config.get("frame_rate", 30.0)),

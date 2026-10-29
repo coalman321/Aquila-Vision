@@ -99,7 +99,7 @@ struct ApriltagConfig : public PipelineType {
 
 class PipelineConfig {
    public:
-    PipelineConfig() : exposure(1000.0), gain(0.5) {}
+    PipelineConfig() : exposure(1000.0), gain(0.0) {}
 
     json toJson() const {
         json j;
@@ -163,7 +163,7 @@ class PipelineConfig {
     // Common settings for preprocessing
     basin::jsonable::Pose3d camera_pose;  ///< Pose of the camera
     double exposure{ 10000 };             ///< Camera exposure setting
-    double gain{ 0.5 };                   ///< Camera gain setting
+    double gain{ 0.0 };                   ///< Camera gain setting
 
     // Pipeline-specific settings
     DetectionConfig detection_config;  ///< Object detection configuration
