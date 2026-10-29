@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <chrono>
+#include <basin/node_core/node_core.hpp>
 #include <basler_driver_msgs/msg/component_status.hpp>
 #include <camera_info_manager/camera_info_manager.hpp>
 #include <cv_bridge/cv_bridge.hpp>
@@ -27,9 +29,13 @@ namespace basler_driver {
 // Publishes ~/image_raw (+ camera_info), ~/image_rect when calibrated, and ~/status, as the original
 // does. Camera settings are ROS parameters applied live with `ros2 param set`, instead of the
 // original's set_* services; only commands remain services. See README.md.
-class BaslerDriverNode : public rclcpp::Node {
+class BaslerDriverNode : public basin::node_core::NodeCore {
    public:
     explicit BaslerDriverNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+
+    // NodeCore virtual method implementations
+    void onTick() override;
+    void shutdown() override;
 
    private:
     // A parameter backed directly by a GenICam feature. Declared only when the camera has the feature,
@@ -49,7 +55,9 @@ class BaslerDriverNode : public rclcpp::Node {
         std::optional<rclcpp::ParameterValue> fallback;
     };
 
-    bool init();
+    // Opens the camera and starts grabbing. False if it isn't there (onTick() retries) or can't be set up
+    // (the node shuts down).
+    bool connect();
     bool initAndRegister();
     bool startGrabbing();
     void spin();
@@ -105,7 +113,7 @@ class BaslerDriverNode : public rclcpp::Node {
     void createCameraInfoDiagnostics(diagnostic_updater::DiagnosticStatusWrapper& stat);
 
     std::unique_ptr<BaslerCamera> camera_;
-    BaslerDriverParameters parameters_;
+    std::unique_ptr<BaslerDriverParameters> parameters_;
     std::shared_ptr<camera_info_manager::CameraInfoManager> camera_info_manager_;
     std::unique_ptr<image_geometry::PinholeCameraModel> pinhole_model_;
     std::unique_ptr<cv_bridge::CvImage> cv_bridge_img_rect_;
@@ -121,6 +129,9 @@ class BaslerDriverNode : public rclcpp::Node {
 
     std::vector<FeatureParameter> feature_parameters_;
     bool feature_parameters_declared_ = false;
+    std::chrono::steady_clock::time_point next_connect_attempt_;
+    // Set by shutdown(), so onTick() leaves the released camera closed.
+    bool shut_down_ = false;
     // Parameters to replay when the camera reconnects, in the order they were set.
     std::vector<std::string> applied_parameters_;
     // True while the node writes parameters itself: accept them without applying them to the camera.

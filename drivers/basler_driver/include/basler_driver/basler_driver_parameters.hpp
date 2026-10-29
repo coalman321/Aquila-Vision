@@ -1,5 +1,6 @@
 #pragma once
 
+#include <basin/node_core/node_params.hpp>
 #include <cstddef>
 #include <rclcpp/node.hpp>
 #include <string>
@@ -11,22 +12,25 @@ enum SHUTTER_MODE { SM_ROLLING = 0, SM_GLOBAL = 1, SM_GLOBAL_RESET_RELEASE = 2, 
 // The node's startup parameters: the same names, defaults and validation as pylon-ros-camera's
 // BaslerDriverParameters, minus the GigE-only gige/* ones, auto_flash* (not on USB cameras) and
 // enable_current_params_publisher (no current_params topic).
-class BaslerDriverParameters {
+class BaslerDriverParameters : public basin::node_core::NodeParams {
    public:
-    // Declares any parameter not already given as an override, then reads and validates them all.
-    void readFromRosParameterServer(rclcpp::Node& nh);
+    explicit BaslerDriverParameters(rclcpp::Node* node) : basin::node_core::NodeParams(node) {}
+
+    // Declares any parameter not already declared, then reads and validates them all. Runs again when
+    // the camera reconnects.
+    void readFromRosParameterServer();
 
     const std::string& deviceUserID() const { return device_user_id_; }
-    void setDeviceUserId(rclcpp::Node& nh, const std::string& device_user_id);
+    void setDeviceUserId(const std::string& device_user_id);
     const std::string& deviceSerial() const { return device_serial_; }
 
     const std::string& imageEncoding() const { return image_encoding_; }
-    void setimageEncodingParam(rclcpp::Node& nh, const std::string& format);
+    void setimageEncodingParam(const std::string& format);
 
     const std::string& cameraFrame() const { return camera_frame_; }
 
     const double& frameRate() const { return frame_rate_; }
-    void setFrameRate(rclcpp::Node& nh, const double& frame_rate);
+    void setFrameRate(const double& frame_rate);
 
     const std::string& cameraInfoURL() const { return camera_info_url_; }
 
@@ -37,7 +41,7 @@ class BaslerDriverParameters {
     bool binning_x_given_ = false;
     bool binning_y_given_ = false;
 
-    int downsampling_factor_exposure_search_ = 1;
+    int downsampling_factor_exposure_search_ = 20;
 
     // Exposure time in microseconds.
     double exposure_ = 10000.0;
@@ -58,7 +62,7 @@ class BaslerDriverParameters {
     bool gain_auto_ = true;
 
     double exposure_search_timeout_ = 5.0;
-    double auto_exposure_upper_limit_ = 0.0;
+    double auto_exposure_upper_limit_ = 10000000.0;
 
     bool enable_status_publisher_ = false;
 
@@ -80,7 +84,13 @@ class BaslerDriverParameters {
     int grab_strategy_ = 0;
 
    private:
-    void validateParameterSet(rclcpp::Node& nh);
+    // createParam(), also taking integer overrides for double and string parameters. Returns whether
+    // `name` was given at launch, which several parameters use to tell "set by the user" from
+    // "defaulted".
+    template <typename T>
+    bool createLaunchParam(const std::string& name, T& var);
+
+    void validateParameterSet();
 
     std::string camera_frame_ = "basler_camera";
     std::string device_user_id_;

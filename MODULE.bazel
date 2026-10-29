@@ -169,6 +169,19 @@ single_version_override(
     version = "1.10.5.bcr.3",
 )
 
+# Fast DDS (pulled in by rmw_fastrtps_cpp). Upstream's CMake build probes the
+# framework std::shared_mutex and forces USE_THIRDPARTY_SHARED_MUTEX on when it
+# is writer-preferring, as libc++'s is; the BCR Bazel build skips that probe and
+# configures it to 0. Fast DDS takes its shared locks recursively, so with
+# libc++'s mutex a node creating an endpoint (seen in camera_cal_node's
+# create_service) could deadlock against the discovery threads and hang forever.
+single_version_override(
+    module_name = "fastdds",
+    patch_strip = 1,
+    patches = ["//patches:fastdds_thirdparty_shared_mutex.patch"],
+    version = "3.4.2.bcr.1",
+)
+
 # BCR: googletest (pinned to the same version ros_core itself depends on).
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2")
 

@@ -1,0 +1,13 @@
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -41,6 +41,10 @@
+         "HAVE_LOG_NO_INFO=1",
+         "HAVE_LOG_NO_WARNING=1",
+         "TLS_FOUND=1",
++        # Upstream CMake probes the framework shared_mutex and forces this on when it is not
++        # reader-preferring (libc++). Fast DDS takes its shared locks recursively, so a
++        # writer-preferring std::shared_mutex deadlocks endpoint creation against discovery.
++        "USE_THIRDPARTY_SHARED_MUTEX=1",
+         "PROJECT_VERSION={}".format(UPSTREAM_VERSION),
+         "PROJECT_VERSION_MAJOR={}".format(UPSTREAM_VERSION_MAJOR),
+         "PROJECT_VERSION_MINOR={}".format(UPSTREAM_VERSION_MINOR),
