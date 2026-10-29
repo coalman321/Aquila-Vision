@@ -35,8 +35,9 @@ cc_ros_library(
     ],
 )
 
-# Every RCR cc_shared_library the node reaches. OpenCV is here too: cv_bridge and image_geometry link
-# the shared @rosdistro//cc:opencv, so the node has to use that same copy.
+# Every RCR cc_shared_library the node reaches, directly or through //basin/core/node_core. OpenCV is
+# here too: cv_bridge and image_geometry link the shared @rosdistro//cc:opencv, so the node has to use
+# that same copy.
 DYNAMIC_DEPENDENCIES = {
     "@camera_info_manager//:camera_info_manager": "@camera_info_manager//:camera_info_manager_library",
     "@cv_bridge//:cv_bridge": "@cv_bridge//:cv_bridge_library",
@@ -79,6 +80,7 @@ cc_library(
     includes = ["include"],
     deps = [
         ":camera_msgs",
+        "//basin/core/node_core",
         "@aravis",
         "@rclcpp//:rclcpp_library",
         # sensor_msgs/image_encodings.hpp
@@ -100,6 +102,7 @@ cc_library(
     deps = DYNAMIC_DEPENDENCIES.values() + [
         ":camera",
         ":node_msgs",
+        "//basin/core/node_core",
     ],
 )
 

@@ -7,12 +7,14 @@
 #include <optional>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <status_msgs/msg/fault_report.hpp>
 #include <string>
 
 #include "basler_driver/basler_driver_node.hpp"
 
 using namespace std::chrono_literals;
 using sensor_msgs::msg::Image;
+using status_msgs::msg::FaultReport;
 
 namespace {
 
@@ -26,7 +28,9 @@ class BaslerDriverNodeTest : public ::testing::Test {
         // The BCR build of Aravis doesn't embed the simulated camera's GenICam description, so hand it
         // a copy (test/testdata/arv-fake-camera.xml, from Aravis itself).
         arv_set_fake_camera_genicam_filename("drivers/basler_driver/test/testdata/arv-fake-camera.xml");
-        arv_enable_interface("Fake");
+        if (cameraPresentAtStart()) {
+            arv_enable_interface("Fake");
+        }
         // Bazel runs tests concurrently, so take a DDS domain of our own.
         rclcpp::InitOptions init_options;
         init_options.set_domain_id(static_cast<size_t>(::getpid()) % 102);
@@ -47,12 +51,16 @@ class BaslerDriverNodeTest : public ::testing::Test {
         probe_ = std::make_shared<rclcpp::Node>("basler_probe");
         image_sub_ = probe_->create_subscription<Image>("/basler_driver/image_raw", rclcpp::QoS(10),
                                                         [this](Image::ConstSharedPtr msg) { last_image_ = *msg; });
+        fault_sub_ = probe_->create_subscription<FaultReport>(
+            "/state/fault_report", rclcpp::QoS(20).reliable().transient_local(),
+            [this](FaultReport::ConstSharedPtr msg) { last_fault_ = *msg; });
         executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>();
         executor_->add_node(node_);
         executor_->add_node(probe_);
     }
 
     void TearDown() override {
+        fault_sub_.reset();
         image_sub_.reset();
         executor_.reset();
         probe_.reset();
@@ -89,6 +97,8 @@ class BaslerDriverNodeTest : public ::testing::Test {
         return last_image_;
     }
 
+    virtual bool cameraPresentAtStart() const { return true; }
+
     rcl_interfaces::msg::SetParametersResult set(const rclcpp::Parameter& parameter) {
         return node_->set_parameter(parameter);
     }
@@ -96,8 +106,16 @@ class BaslerDriverNodeTest : public ::testing::Test {
     std::shared_ptr<basler_driver::BaslerDriverNode> node_;
     std::shared_ptr<rclcpp::Node> probe_;
     rclcpp::Subscription<Image>::SharedPtr image_sub_;
+    rclcpp::Subscription<FaultReport>::SharedPtr fault_sub_;
     std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> executor_;
     std::optional<Image> last_image_;
+    std::optional<FaultReport> last_fault_;
+};
+
+// Starts the node while the simulated camera isn't plugged in.
+class BaslerDriverNodeLateCameraTest : public BaslerDriverNodeTest {
+   protected:
+    bool cameraPresentAtStart() const override { return false; }
 };
 
 TEST_F(BaslerDriverNodeTest, PublishesSoftwareTriggeredFrames) {
@@ -162,6 +180,24 @@ TEST_F(BaslerDriverNodeTest, SleepingStopsImages) {
 
     ASSERT_TRUE(set(rclcpp::Parameter("sleeping", false)).successful);
     EXPECT_TRUE(nextImage().has_value());
+}
+
+TEST_F(BaslerDriverNodeLateCameraTest, ReportsMissingCameraAndConnectsWhenItAppears) {
+    // The constructor returned without a camera; the node keeps running and says why.
+    ASSERT_TRUE(spinUntil([this] { return last_fault_.has_value(); }));
+    EXPECT_EQ(last_fault_->key.fault_system, "basler_driver");
+    EXPECT_EQ(last_fault_->key.fault_name, "camera_disconnected");
+    EXPECT_FALSE(node_->has_parameter("trigger_mode"));
+
+    // Changed while disconnected: applied once the camera connects.
+    EXPECT_TRUE(set(rclcpp::Parameter("roi.width", int64_t{ 160 })).successful);
+
+    arv_enable_interface("Fake");
+    const std::optional<Image> image = nextImage();
+    ASSERT_TRUE(image.has_value());
+    EXPECT_EQ(image->width, 160u);
+    EXPECT_EQ(image->height, 240u);
+    EXPECT_TRUE(node_->has_parameter("trigger_mode"));
 }
 
 }  // namespace

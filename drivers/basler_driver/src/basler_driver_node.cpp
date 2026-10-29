@@ -16,6 +16,12 @@ const rclcpp::Logger LOGGER = rclcpp::get_logger("basler_driver");
 using ComponentStatus = basler_driver_msgs::msg::ComponentStatus;
 using Trigger = std_srvs::srv::Trigger;
 
+constexpr const char* FAULT_SYSTEM = "basler_driver";
+constexpr const char* FAULT_CAMERA_DISCONNECTED = "camera_disconnected";
+constexpr std::chrono::duration<double> FAULT_TOV{ 1.0 };
+// How often onTick() tries to open a missing camera.
+constexpr std::chrono::seconds CONNECT_RETRY_PERIOD{ 2 };
+
 // Set at launch only: they say which camera this node drives and how it starts.
 const std::set<std::string> IDENTITY_PARAMETERS = { "camera_frame", "device_user_id", "device_serial",
                                                     "camera_info_url", "startup_user_set" };
@@ -54,11 +60,12 @@ std::string joined(const std::vector<std::string>& values) {
 }  // namespace
 
 BaslerDriverNode::BaslerDriverNode(const rclcpp::NodeOptions& options) :
-    Node("basler_driver", options),
+    basin::node_core::NodeCore("basler_driver", "", options),
     camera_info_manager_(std::make_shared<camera_info_manager::CameraInfoManager>(
         get_node_base_interface(), get_node_services_interface(), get_node_logging_interface(), "camera", "",
         rclcpp::SystemDefaultsQoS())),
     diagnostics_updater_(this) {
+    parameters_ = std::make_unique<BaslerDriverParameters>(this);
     component_status_pub_ = create_publisher<ComponentStatus>("~/status", 5);
     img_raw_pub_ = image_transport::create_camera_publisher(*this, "~/image_raw", rclcpp::QoS(10));
     initServices();
@@ -68,20 +75,36 @@ BaslerDriverNode::BaslerDriverNode(const rclcpp::NodeOptions& options) :
     diagnostics_updater_.add("intrinsic_calibration", this, &BaslerDriverNode::createCameraInfoDiagnostics);
 
     declareNodeParameters();
-    // Registered before init() so the parameter writes it makes are accepted; they are only applied
+    // Registered before connect() so the parameter writes it makes are accepted; they are only applied
     // to the camera once it is grabbing.
     param_callback_handle_ =
         add_on_set_parameters_callback(std::bind(&BaslerDriverNode::onParameterChange, this, std::placeholders::_1));
 
-    if (!init()) {
+    // Without a camera yet, onTick() reports it missing and keeps trying.
+    std::lock_guard<std::recursive_mutex> lock(grab_mutex_);
+    connect();
+}
+
+void BaslerDriverNode::onTick() {
+    // Frames are grabbed on their own frame_rate timer (resetFrameTimer()); the tick watches the connection.
+    std::lock_guard<std::recursive_mutex> lock(grab_mutex_);
+    if (camera_ || shut_down_) {
         return;
     }
-    declareFeatureParameters();
-    applyRemainingSettings(false);
+    std::string camera ="the first Basler camera found";
+    if (!parameters_->deviceUserID().empty()) {
+        camera = "device_user_id '" + parameters_->deviceUserID() + "'";
+    } else if (!parameters_->deviceSerial().empty()) {
+        camera = "device_serial '" + parameters_->deviceSerial() + "'";
+    }
+    sendFaultReport(FAULT_SYSTEM, FAULT_CAMERA_DISCONNECTED, FAULT_TOV, "No camera connected (" + camera + ")");
 
-    RCLCPP_INFO_STREAM(LOGGER, "Start image grabbing if node connects to topic with a spinning rate of: "
-                                   << parameters_.frameRate() << " Hz");
-    resetFrameTimer(parameters_.frameRate());
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_connect_attempt_) {
+        return;
+    }
+    next_connect_attempt_ = now + CONNECT_RETRY_PERIOD;
+    connect();
 }
 
 void BaslerDriverNode::declareNodeParameters() {
@@ -103,11 +126,17 @@ void BaslerDriverNode::declareNodeParameters() {
                       describe("Feature persistence (.pfs) file loaded into the camera when set."));
 }
 
-bool BaslerDriverNode::init() {
-    parameters_.readFromRosParameterServer(*this);
+bool BaslerDriverNode::connect() {
+    // Startup values (e.g. auto functions turned on for a brightness target), not changes to apply.
+    syncing_parameters_ = true;
+    parameters_->readFromRosParameterServer();
+    syncing_parameters_ = false;
     is_sleeping_ = get_parameter("sleeping").as_bool();
 
     if (!initAndRegister()) {
+        if (camera_ == nullptr) {
+            return false;
+        }
         RCLCPP_ERROR(LOGGER, "Error when trying to init and register. Shutting down now.");
         rclcpp::shutdown();
         return false;
@@ -117,13 +146,21 @@ bool BaslerDriverNode::init() {
         rclcpp::shutdown();
         return false;
     }
+
+    const bool reconnect = feature_parameters_declared_;
+    declareFeatureParameters();
+    applyRemainingSettings(reconnect);
+
+    RCLCPP_INFO_STREAM(LOGGER, "Start image grabbing if node connects to topic with a spinning rate of: "
+                                   << parameters_->frameRate() << " Hz");
+    resetFrameTimer(parameters_->frameRate());
     return true;
 }
 
 void BaslerDriverNode::publishStatus(int8_t status_id, const std::string& message) {
     cm_status_.status_id = status_id;
     cm_status_.status_msg = message;
-    if (parameters_.enable_status_publisher_) {
+    if (parameters_->enable_status_publisher_) {
         component_status_pub_->publish(cm_status_);
     }
 }
@@ -131,41 +168,25 @@ void BaslerDriverNode::publishStatus(int8_t status_id, const std::string& messag
 bool BaslerDriverNode::initAndRegister() {
     OpenByType open_by_type = OpenByType::FirstFound;
     std::string id;
-    if (!parameters_.deviceUserID().empty()) {
+    if (!parameters_->deviceUserID().empty()) {
         open_by_type = OpenByType::DeviceUserID;
-        id = parameters_.deviceUserID();
-    } else if (!parameters_.deviceSerial().empty()) {
+        id = parameters_->deviceUserID();
+    } else if (!parameters_->deviceSerial().empty()) {
         open_by_type = OpenByType::DeviceSerial;
-        id = parameters_.deviceSerial();
+        id = parameters_->deviceSerial();
     }
 
+    // One attempt: onTick() retries while the camera is missing.
     camera_ = BaslerCamera::create(open_by_type, id);
     if (camera_ == nullptr) {
         publishStatus(ComponentStatus::ERROR, "No available camera");
-        RCLCPP_WARN_STREAM(LOGGER, "Failed to connect camera device with id: "
-                                       << id
-                                       << ". Wait and retry to connect until the specified camera is available...");
-        rclcpp::Time end = now() + rclcpp::Duration::from_seconds(15);
-        rclcpp::Rate r(0.5);
-        while (rclcpp::ok() && camera_ == nullptr) {
-            camera_ = BaslerCamera::create(open_by_type, id);
-            if (camera_ == nullptr) {
-                RCLCPP_WARN_STREAM(LOGGER,
-                                   "Failed to connect camera device with id: " << id << ". Trying again in a bit...");
-            }
-            if (now() > end) {
-                RCLCPP_WARN_STREAM(LOGGER, "No available camera. Keep waiting and trying...");
-                publishStatus(ComponentStatus::ERROR, "No available camera");
-                end = now() + rclcpp::Duration::from_seconds(15);
-            }
-            r.sleep();
-        }
-    }
-    if (!rclcpp::ok() || camera_ == nullptr) {
+        RCLCPP_WARN_STREAM_THROTTLE(LOGGER, *get_clock(), 15000,
+                                    "Failed to connect camera device with id: "
+                                        << id << ". Will keep retrying until the specified camera is available...");
         return false;
     }
-    if (parameters_.deviceUserID().empty()) {
-        parameters_.setDeviceUserId(*this, camera_->deviceUserID());
+    if (parameters_->deviceUserID().empty()) {
+        parameters_->setDeviceUserId(camera_->deviceUserID());
     }
     publishStatus(ComponentStatus::RUNNING, "running");
 
@@ -173,7 +194,7 @@ bool BaslerDriverNode::initAndRegister() {
         publishStatus(ComponentStatus::ERROR, "Error while registering the camera configuration");
         return false;
     }
-    if (!camera_->applyCamSpecificStartupSettings(parameters_)) {
+    if (!camera_->applyCamSpecificStartupSettings(*parameters_)) {
         RCLCPP_ERROR(LOGGER, "Error while applying the user-specified startup settings to the camera!");
         publishStatus(ComponentStatus::ERROR, "Error while applying the user-specified startup settings");
         return false;
@@ -182,10 +203,10 @@ bool BaslerDriverNode::initAndRegister() {
 }
 
 bool BaslerDriverNode::startGrabbing() {
-    if (!camera_->startGrabbing(parameters_)) {
+    if (!camera_->startGrabbing(*parameters_)) {
         return false;
     }
-    img_raw_msg_.header.frame_id = parameters_.cameraFrame();
+    img_raw_msg_.header.frame_id = parameters_->cameraFrame();
     updateImageGeometry();
 
     if (!camera_info_manager_->setCameraName(camera_->deviceUserID())) {
@@ -195,7 +216,7 @@ bool BaslerDriverNode::startGrabbing() {
     setupInitialCameraInfo(initial_cam_info);
     camera_info_manager_->setCameraInfo(initial_cam_info);
 
-    const std::string& url = parameters_.cameraInfoURL();
+    const std::string& url = parameters_->cameraInfoURL();
     if (url.empty() || !camera_info_manager_->validateURL(url)) {
         RCLCPP_INFO_STREAM(LOGGER, "CameraInfoURL needed for rectification! ROS2-Param: '"
                                        << get_namespace() << "/camera_info_url' = '" << url << "' is invalid!");
@@ -212,7 +233,7 @@ bool BaslerDriverNode::startGrabbing() {
         RCLCPP_WARN(LOGGER, "Will only provide distorted /image_raw images!");
     }
 
-    auto& parameters = parameters_;
+    auto& parameters = *parameters_;
     if (parameters.binning_x_given_) {
         std::size_t reached_binning_x = 0;
         setBinningX(parameters.binning_x_, reached_binning_x);
@@ -259,12 +280,22 @@ bool BaslerDriverNode::startGrabbing() {
     if (max_frame_rate < parameters.frameRate()) {
         RCLCPP_INFO(LOGGER, "Desired framerate %.2f is higher than max possible. Will limit framerate to: %.2f Hz",
                     parameters.frameRate(), max_frame_rate);
-        parameters.setFrameRate(*this, max_frame_rate);
+        parameters.setFrameRate(max_frame_rate);
     } else if (parameters.frameRate() == -1) {
-        parameters.setFrameRate(*this, max_frame_rate);
+        parameters.setFrameRate(max_frame_rate);
         RCLCPP_INFO(LOGGER, "Max possible framerate is %.2f Hz", max_frame_rate);
     }
     return true;
+}
+
+void BaslerDriverNode::shutdown() {
+    RCLCPP_INFO(LOGGER, "Shutting down: releasing the camera");
+    if (timer_) {
+        timer_->cancel();
+    }
+    std::lock_guard<std::recursive_mutex> lock(grab_mutex_);
+    shut_down_ = true;
+    camera_.reset();
 }
 
 void BaslerDriverNode::resetFrameTimer(double frame_rate) {
@@ -273,6 +304,9 @@ void BaslerDriverNode::resetFrameTimer(double frame_rate) {
 }
 
 void BaslerDriverNode::spin() {
+    if (!camera_) {
+        return;  // onTick() reconnects
+    }
     if (camera_info_manager_->isCalibrated()) {
         RCLCPP_INFO_ONCE(LOGGER, "Camera is calibrated");
     } else {
@@ -280,16 +314,10 @@ void BaslerDriverNode::spin() {
     }
 
     if (camera_->isCamRemoved()) {
-        RCLCPP_ERROR(LOGGER, "Camera has been removed, trying to reset");
+        RCLCPP_ERROR(LOGGER, "Camera has been removed, reconnecting once it is available");
         publishStatus(ComponentStatus::ERROR, "Camera has been removed, trying to reset");
-        {
-            std::lock_guard<std::recursive_mutex> lock(grab_mutex_);
-            camera_.reset();
-        }
-        rclcpp::Rate(0.5).sleep();
-        if (init()) {
-            applyRemainingSettings(true);
-        }
+        std::lock_guard<std::recursive_mutex> lock(grab_mutex_);
+        camera_.reset();
         return;
     }
 
@@ -323,12 +351,12 @@ void BaslerDriverNode::spin() {
     }
 
     // The camera fell back to another encoding (or a user set changed it): make the parameter say so.
-    if (parameters_.imageEncoding() != camera_->currentROSEncoding()) {
+    if (parameters_->imageEncoding() != camera_->currentROSEncoding()) {
         syncing_parameters_ = true;
-        parameters_.setimageEncodingParam(*this, camera_->currentROSEncoding());
+        parameters_->setimageEncodingParam(camera_->currentROSEncoding());
         syncing_parameters_ = false;
     }
-    if (parameters_.enable_status_publisher_) {
+    if (parameters_->enable_status_publisher_) {
         component_status_pub_->publish(cm_status_);
     }
 }
@@ -349,7 +377,7 @@ void BaslerDriverNode::updateImageGeometry() {
     img_raw_msg_.width = static_cast<uint32_t>(camera_->imageCols());
     img_raw_msg_.step = img_raw_msg_.width * static_cast<uint32_t>(camera_->imagePixelDepth());
     setupSamplingIndices(sampling_indices_, camera_->imageRows(), camera_->imageCols(),
-                         parameters_.downsampling_factor_exposure_search_);
+                         parameters_->downsampling_factor_exposure_search_);
 }
 
 std::string BaslerDriverNode::restartGrabbing() {
@@ -571,13 +599,18 @@ void BaslerDriverNode::declareFeatureParameters() {
 
 void BaslerDriverNode::applyRemainingSettings(bool reconnect) {
     std::lock_guard<std::recursive_mutex> lock(grab_mutex_);
-    if (reconnect) {
-        for (const std::string& name : applied_parameters_) {
+    // Settings made while there was no camera (or, on a reconnect, all of them so far).
+    const std::vector<std::string> replay = applied_parameters_;
+    const auto apply_replay = [&] {
+        for (const std::string& name : replay) {
             const std::string result = applyParameter(get_parameter(name), {});
             if (result != "done") {
                 RCLCPP_WARN_STREAM(LOGGER, "Unable to re-apply " << name << ": " << result);
             }
         }
+    };
+    if (reconnect) {
+        apply_replay();
         return;
     }
     for (const auto& [name, value] : get_node_parameters_interface()->get_parameter_overrides()) {
@@ -595,6 +628,7 @@ void BaslerDriverNode::applyRemainingSettings(bool reconnect) {
             RCLCPP_WARN_STREAM(LOGGER, "Unable to apply " << name << ": " << result);
         }
     }
+    apply_replay();
 }
 
 void BaslerDriverNode::refreshParametersFromCamera() {
@@ -623,7 +657,7 @@ void BaslerDriverNode::refreshParametersFromCamera() {
             RCLCPP_WARN_STREAM(LOGGER, "Unable to refresh a parameter from the camera: " << result.reason);
         }
     }
-    parameters_.setimageEncodingParam(*this, camera_->currentROSEncoding());
+    parameters_->setimageEncodingParam(camera_->currentROSEncoding());
     syncing_parameters_ = false;
 }
 
@@ -670,7 +704,12 @@ rcl_interfaces::msg::SetParametersResult BaslerDriverNode::onParameterChange(
     }
     std::lock_guard<std::recursive_mutex> lock(grab_mutex_);
     if (!camera_ || !camera_->isReady()) {
-        // Starting up (or reconnecting): init() applies the values once the camera is grabbing.
+        // No camera yet (or reconnecting): connect() applies the values once the camera is grabbing.
+        for (const rclcpp::Parameter& parameter : parameters) {
+            if (IDENTITY_PARAMETERS.count(parameter.get_name()) == 0) {
+                rememberApplied(parameter.get_name());
+            }
+        }
         return result;
     }
     for (const rclcpp::Parameter& parameter : parameters) {
@@ -696,7 +735,7 @@ rcl_interfaces::msg::SetParametersResult BaslerDriverNode::onParameterChange(
 std::string BaslerDriverNode::applyParameter(const rclcpp::Parameter& parameter,
                                              const std::vector<rclcpp::Parameter>& batch) {
     const std::string& name = parameter.get_name();
-    auto& parameters = parameters_;
+    auto& parameters = *parameters_;
     const auto pending_bool = [&](const std::string& n) { return pendingValue(n, batch).as_bool(); };
     const auto pending_double = [&](const std::string& n) { return pendingValue(n, batch).as_double(); };
     const auto pending_int = [&](const std::string& n) { return pendingValue(n, batch).as_int(); };
@@ -1020,7 +1059,7 @@ bool BaslerDriverNode::setBrightness(const int& target_brightness, int& reached_
     const std::size_t fail_safe_ctr_limit = 10;
     float last_brightness = std::numeric_limits<float>::max();
     const rclcpp::Time start_time = now();
-    const double timeout_s = parameters_.exposure_search_timeout_ + (target < 205 ? 0.0 : 10.0);
+    const double timeout_s = parameters_->exposure_search_timeout_ + (target < 205 ? 0.0 : 10.0);
     const rclcpp::Time timeout = start_time + rclcpp::Duration::from_seconds(timeout_s);
 
     while (rclcpp::ok()) {
@@ -1138,7 +1177,7 @@ float BaslerDriverNode::calcCurrentBrightness() {
 
 void BaslerDriverNode::setupInitialCameraInfo(sensor_msgs::msg::CameraInfo& cam_info_msg) {
     camera_->getInitialCameraInfo(cam_info_msg);
-    cam_info_msg.header.frame_id = parameters_.cameraFrame();
+    cam_info_msg.header.frame_id = parameters_->cameraFrame();
     cam_info_msg.header.stamp = now();
 }
 
@@ -1175,7 +1214,7 @@ void BaslerDriverNode::createDiagnostics(diagnostic_updater::DiagnosticStatusWra
         stat.add("buffer_underrun_count", camera_->getStatisticBufferUnderrunCount());
         stat.add("missed_frame_count", camera_->getStatisticMissedFrameCount());
     } else {
-        diagnostics_updater_.setHardwareID(parameters_.deviceUserID());
+        diagnostics_updater_.setHardwareID(parameters_->deviceUserID());
         stat.summary(diagnostic_msgs::msg::DiagnosticStatus::ERROR, "No camera connected");
         publishStatus(ComponentStatus::ERROR, "No camera connected");
     }

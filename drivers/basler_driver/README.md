@@ -23,9 +23,16 @@ ros2 param set /basler_driver exposure 4000.0
 ## How it grabs
 
 As in the original, the camera runs in software-trigger mode: every tick of a `frame_rate` timer fires a
-software trigger, waits for that frame, and publishes it. Nothing is grabbed while no one subscribes. If the
-camera is unplugged (Aravis reports `control-lost`), the node waits for it to come back, reopens it, and
-re-applies every setting made at launch or since.
+software trigger, waits for that frame, and publishes it. Nothing is grabbed while no one subscribes.
+
+The node is a `basin::node_core::NodeCore`: it sends process heartbeats on the core tick (`core.tick_period`,
+0.1 s by default), and frames don't depend on that tick. While there is no camera — not found at startup, or
+unplugged (Aravis reports `control-lost`) — the tick raises a `basler_driver/camera_disconnected` fault and
+tries to open it every 2 s, without blocking the node. Once it is back, every setting made at launch or since,
+including while it was missing, is re-applied.
+
+A brightness search (setting `brightness`) still blocks the node for up to `exposure_search_timeout` (15 s
+more for targets above 204), long enough for a launch watchdog to time it out.
 
 ## Topics
 

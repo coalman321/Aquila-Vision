@@ -3,4 +3,5 @@ exports_files([
     "libpcap_pregenerate_parser.patch",
     "rules_cuda_clang_copts_after_toolchain_flags.patch",
     "rules_cuda_clang_cuda_version.patch",
+    "fastdds_thirdparty_shared_mutex.patch",
 ])
