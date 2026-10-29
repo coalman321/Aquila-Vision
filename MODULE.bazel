@@ -183,8 +183,11 @@ bazel_dep(name = "protobuf", version = "35.1")
 
 # MW-Lib (the team's roboRIO library) owns the .proto definitions of the UDP link between
 # //camera_app/chassis_proxy_client and its ProxyServerThread; //third_party/mwlib:mwlib.BUILD builds
-# them. Pinned to a release tag: bump the tag in urls and strip_prefix and the sha256 together, and
-# deploy robot code built against the same tag. To build against a local MW-Lib checkout instead,
+# them. Pin either a release tag (urls = [".../archive/refs/tags/v<X>.tar.gz"],
+# strip_prefix = "MW-Lib-<X without the v>") or a branch commit (urls = [".../archive/<full sha>.tar.gz"],
+# strip_prefix = "MW-Lib-<full sha>"); bump urls, strip_prefix and sha256 together, and deploy robot code
+# built against the same MW-Lib commit. Currently develop-2027 (after PR #171) until a v27 release
+# carries the protocol. To build against a local MW-Lib checkout instead,
 # temporarily swap this for new_local_repository (@bazel_tools//tools/build_defs/repo:local.bzl) with the
 # same name and build_file and path = "/path/to/MW-Lib".
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
@@ -192,9 +195,9 @@ http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "ht
 http_archive(
     name = "mwlib",
     build_file = "//third_party/mwlib:mwlib.BUILD",
-    sha256 = "",
-    strip_prefix = "MW-Lib-27.1.0",
-    urls = ["https://github.com/FRC-Team-4143/MW-Lib/archive/refs/tags/v27.1.0.tar.gz"],
+    sha256 = "4c6b73e5cd61e45a9f53a0453ecea4cceaa08f1595b228237bb93ba70eba256f",
+    strip_prefix = "MW-Lib-d52f9a3b7f6dcba0509bd63de311c56936eb8491",
+    urls = ["https://github.com/FRC-Team-4143/MW-Lib/archive/d52f9a3b7f6dcba0509bd63de311c56936eb8491.tar.gz"],
 )
 
 # The HTTP server behind //basin/web/web_core's WebNode (header-only). Its BCR target lists
