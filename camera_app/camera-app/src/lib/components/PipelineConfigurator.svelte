@@ -315,11 +315,15 @@
             <div class="preview-section">
               <h5>Camera Preview</h5>
               <div class="camera-wrapper">
-                <CameraViewer serverUrl={(() => {
-                  const url = new URL(serverUrl);
-                  url.port = String(parseInt(url.port || '80') + 1);
-                  return url.toString().replace(/\/$/, '');
-                })()} defaultStream={`/${selectedPipeline}/driver/image_raw`} />
+                <!-- Remount per pipeline so the default stream follows the selection -->
+                {#key selectedPipeline}
+                  <CameraViewer serverUrl={(() => {
+                    const url = new URL(serverUrl);
+                    url.port = String(parseInt(url.port || '80') + 1);
+                    return url.toString().replace(/\/$/, '');
+                  })()} defaultStream={`/${selectedPipeline}/driver/image_raw`}
+                    streamFilter={`/${selectedPipeline}`} />
+                {/key}
               </div>
             </div>
 
