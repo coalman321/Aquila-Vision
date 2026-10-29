@@ -116,7 +116,7 @@ export type ConfiguredEvent = {
 export type LoggerStatus = {
   logPath: string;
   diskUsagePercent: number;
-  diskMaxUsagePercent: number;
+  diskRotationThresholdPercent: number;
   diskWarningThresholdPercent: number;
   diskTotalBytes: number;
   diskFreeBytes: number;
@@ -160,7 +160,7 @@ export function parseLoggerStatus(message: unknown, arrivedMs: number): LoggerSt
   return {
     logPath: record.log_path,
     diskUsagePercent: toNumber(record.disk_usage_percent),
-    diskMaxUsagePercent: toNumber(record.disk_max_usage_percent),
+    diskRotationThresholdPercent: toNumber(record.disk_rotation_threshold_percent),
     diskWarningThresholdPercent: toNumber(record.disk_warning_threshold_percent),
     diskTotalBytes: toNumber(record.disk_total_bytes),
     diskFreeBytes: toNumber(record.disk_free_bytes),
@@ -198,7 +198,7 @@ export type DiskLevel = "ok" | "warn" | "bad";
 
 /** Past the warning threshold the logger logs a warning; at the maximum it starts rotating logs away. */
 export function diskLevel(status: LoggerStatus): DiskLevel {
-  if (status.diskUsagePercent >= status.diskMaxUsagePercent) {
+  if (status.diskUsagePercent >= status.diskRotationThresholdPercent) {
     return "bad";
   }
   return status.diskUsagePercent >= status.diskWarningThresholdPercent ? "warn" : "ok";

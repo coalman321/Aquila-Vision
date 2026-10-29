@@ -35,9 +35,9 @@ class LogManager {
     void set_log_directory(const std::string& directory);
 
     /// @brief Sets disk usage limits
-    /// @param max_usage_percent Maximum disk usage percentage (0-100)
+    /// @param rotation_threshold_percent Disk usage percentage (0-100) at which the oldest unprotected log is deleted
     /// @param warning_threshold_percent Warning threshold percentage (0-100)
-    void set_disk_limits(double max_usage_percent, double warning_threshold_percent);
+    void set_disk_limits(double rotation_threshold_percent, double warning_threshold_percent);
 
     /// @brief Scans the log directory for MCAP files and snapshots
     /// @return Number of MCAP files found
@@ -81,7 +81,7 @@ class LogManager {
     mutable std::mutex mutex_;
     std::string log_directory_;
     std::string manifest_dir_;
-    double max_usage_percent_;
+    double rotation_threshold_percent_;
     double warning_threshold_percent_;
     std::vector<LogFileInfo> log_files_;
     SnapshotWriter snapshot_writer_;

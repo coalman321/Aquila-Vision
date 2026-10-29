@@ -28,6 +28,22 @@ static constexpr const char* DISK_FAULT_SYSTEM = "continuous_logger";
 static constexpr const char* DISK_FAULT_NAME = "disk_usage_high";
 static constexpr double DISK_FAULT_TOV_INTERVALS = 2.0;
 
+// Compiles a topic pattern to a regex: `*` matches one name segment and everything else matches literally.
+static std::regex compileTopicPattern(const std::string& pattern) {
+    std::string expr;
+    for (char c : pattern) {
+        if (c == '*') {
+            expr += "[^/]+";
+        } else {
+            if (std::strchr(".^$|()[]{}+?\\", c) != nullptr) {
+                expr += '\\';
+            }
+            expr += c;
+        }
+    }
+    return std::regex(expr);
+}
+
 struct LogInfo {
     ///< Name of the directory
     std::string name;
@@ -48,7 +64,7 @@ LoggerNode::LoggerNode(const rclcpp::NodeOptions& options) : basin::node_core::N
 
     // Configure log manager
     log_manager_->set_log_directory(params_->log_path.string());
-    log_manager_->set_disk_limits(params_->max_disk_usage_percent, params_->disk_warning_threshold_percent);
+    log_manager_->set_disk_limits(params_->rotation_threshold_percent, params_->disk_warning_threshold_percent);
 
     // Resolve manifest directory (default: {log_path}/pending)
     manifest_dir_ = params_->manifest_dir.empty() ? params_->log_path / "pending" : params_->manifest_dir;
@@ -59,12 +75,19 @@ LoggerNode::LoggerNode(const rclcpp::NodeOptions& options) : basin::node_core::N
 
     // Create the topic subscriptions and handlers
     for (TopicConfig& config : params_->topic_configs) {
+        if (config.topic_name.find('*') != std::string::npos) {
+            RCLCPP_INFO_STREAM(get_logger(), "Requesting subscription to topics matching " << config.topic_name);
+
+            topic_patterns_.push_back(
+                TopicPattern{ config.topic_name, compileTopicPattern(config.topic_name), config.throttle_count });
+            continue;
+        }
+
         RCLCPP_INFO_STREAM(get_logger(), "Requesting subscription to topic " << config.topic_name);
 
-        LoggedTopic logged_topic;
+        LoggedTopic& logged_topic = topics_[config.topic_name];
         logged_topic.topic_name = config.topic_name;
         logged_topic.max_throttle = config.throttle_count;
-        topics_.push_back(logged_topic);
     }
 
     // Create the discovery timer
@@ -173,35 +196,68 @@ void LoggerNode::shutdown() {
 }
 
 void LoggerNode::discoverTopics() {
-    size_t subscribed_topics = 0;
-
     // Get the map of known topics and types
     std::map<std::string, std::vector<std::string>> topic_types_map = get_topic_names_and_types();
 
-    // Try to work over our requested list of subscriptions and subscribe them
-    for (LoggedTopic& logged_topic : topics_) {
-        // If we havent subscribed yet, try to do it if it exists in the list of available topics
-        if (logged_topic.subscription == nullptr &&
-            topic_types_map.find(logged_topic.topic_name) != topic_types_map.end()) {
-            // Configure the topic
-            logged_topic.topic_type = topic_types_map.at(logged_topic.topic_name).at(0);
-            logged_topic.callback = std::bind(&LoggerNode::genericCallback, this, _1, logged_topic);
-            logged_topic.subscription = create_generic_subscription(logged_topic.topic_name, logged_topic.topic_type,
-                                                                    rclcpp::SystemDefaultsQoS(), logged_topic.callback);
+    for (const auto& [topic_name, topic_types] : topic_types_map) {
+        // Find the requested topic this is, either named outright or matching a pattern
+        auto found = topics_.find(topic_name);
+        if (found != topics_.end() && found->second.subscription != nullptr) {
+            continue;
+        }
 
+        const TopicPattern* matched_pattern = nullptr;
+        if (found == topics_.end()) {
+            for (const TopicPattern& pattern : topic_patterns_) {
+                if (std::regex_match(topic_name, pattern.regex)) {
+                    matched_pattern = &pattern;
+                    break;
+                }
+            }
+            if (matched_pattern == nullptr) {
+                continue;
+            }
+
+            found = topics_.emplace(topic_name, LoggedTopic{}).first;
+            found->second.topic_name = topic_name;
+            found->second.max_throttle = matched_pattern->max_throttle;
+        }
+
+        // Configure the topic. A type whose typesupport can't be loaded throws; leave that topic unsubscribed
+        // rather than take the logger down, and try it again next pass
+        LoggedTopic& logged_topic = found->second;
+        logged_topic.topic_type = topic_types.at(0);
+        logged_topic.callback = std::bind(&LoggerNode::genericCallback, this, _1, std::ref(logged_topic));
+        try {
+            logged_topic.subscription = create_generic_subscription(
+                logged_topic.topic_name, logged_topic.topic_type, rclcpp::SystemDefaultsQoS(), logged_topic.callback);
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR_STREAM_THROTTLE(get_logger(), *get_clock(), 60000,
+                                         "Failed to subscribe to topic " << logged_topic.topic_name << " ("
+                                                                         << logged_topic.topic_type << "): " << e.what());
+            continue;
+        }
+
+        if (matched_pattern != nullptr) {
+            RCLCPP_INFO_STREAM(get_logger(), "Subscribed to topic " << logged_topic.topic_name << " (pattern "
+                                                                    << matched_pattern->pattern << ")");
+        } else {
             RCLCPP_INFO_STREAM(get_logger(), "Subscribed to topic " << logged_topic.topic_name);
-
-            subscribed_topics++;
-        } else if (logged_topic.subscription != nullptr) {
-            subscribed_topics++;
         }
     }
 
-    // If the number of topics subscribed is equal to the number requested cancel the timer
-    if (subscribed_topics == topics_.size()) {
-        discovery_timer_->cancel();
-        RCLCPP_INFO(get_logger(), "All topics discovered successfully. Disabling discovery system");
+    // A pattern can match topics that appear at any time, so discovery only ends when there are none and every
+    // named topic is subscribed
+    if (!topic_patterns_.empty()) {
+        return;
     }
+    for (const auto& [topic_name, logged_topic] : topics_) {
+        if (logged_topic.subscription == nullptr) {
+            return;
+        }
+    }
+    discovery_timer_->cancel();
+    RCLCPP_INFO(get_logger(), "All topics discovered successfully. Disabling discovery system");
 }
 
 void LoggerNode::genericCallback(std::shared_ptr<const rclcpp::SerializedMessage> msg, LoggedTopic& topic) {
@@ -381,7 +437,7 @@ void LoggerNode::checkDiskUsage() {
         std::ostringstream desc;
         desc << std::fixed << std::setprecision(1) << "Disk usage is " << log_manager_->get_disk_usage_percent()
              << "%, at or above the " << params_->disk_warning_threshold_percent << "% warning threshold. Old logs are "
-             << "rotated away once it reaches " << params_->max_disk_usage_percent
+             << "rotated away once it reaches " << params_->rotation_threshold_percent
              << "%, except those snapshots protect";
         sendFaultReport(DISK_FAULT_SYSTEM, DISK_FAULT_NAME,
                         std::chrono::duration<double>(DISK_FAULT_TOV_INTERVALS * params_->disk_check_interval),
@@ -493,7 +549,7 @@ logging_msgs::msg::LoggerStatus LoggerNode::buildStatusLocked(const rclcpp::Time
     // (free is f_bfree, not f_bavail).
     status.log_path = params_->log_path.string();
     status.disk_usage_percent = log_manager_->get_disk_usage_percent();
-    status.disk_max_usage_percent = params_->max_disk_usage_percent;
+    status.disk_rotation_threshold_percent = params_->rotation_threshold_percent;
     status.disk_warning_threshold_percent = params_->disk_warning_threshold_percent;
     std::error_code error;
     std::filesystem::space_info space = std::filesystem::space(params_->log_path, error);

@@ -2,10 +2,10 @@
 builtin_interfaces/Time stamp
 
 # Utilization of the filesystem the log directory is on. Old log files are rotated away once
-# disk_usage_percent reaches disk_max_usage_percent, except those a snapshot protects.
+# disk_usage_percent reaches disk_rotation_threshold_percent, except those a snapshot protects.
 string log_path
 float64 disk_usage_percent
-float64 disk_max_usage_percent
+float64 disk_rotation_threshold_percent
 float64 disk_warning_threshold_percent
 uint64 disk_total_bytes
 uint64 disk_free_bytes

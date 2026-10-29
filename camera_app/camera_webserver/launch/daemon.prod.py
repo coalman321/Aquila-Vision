@@ -6,7 +6,7 @@ from ament_index_python import get_package_share_directory
 
 # Add launch directory to path for utils import
 sys.path.insert(0, str(Path(__file__).parent))
-from utils import get_app_dir, get_team_number
+from utils import get_app_dir, get_log_dir, get_team_number
 
 
 def generate_launch_description() -> list:
@@ -99,6 +99,45 @@ def generate_launch_description() -> list:
                 }
             ],
             # args=["--ros-args", "--log-level", "warn"],
+        )
+    )
+
+    # Started with the daemons so it records across camera pipeline reloads. A `*` in a topic name matches
+    # one segment (a camera's namespace), and the logger keeps looking, so cameras enabled later are logged.
+    list.append(
+        Node(
+            package_name="continuous_logger",
+            executable="continuous_logger_node",
+            params=[
+                {
+                    "log_path": get_log_dir(),
+                    "log_split_size": 100 * 1024 * 1024,  # 100 MB
+                    "log_split_time": 30,  # split logs every 30 seconds
+                    "rotation_threshold_percent": 60.0,  # if disk usage exceeds 60%, start deleting old logs
+                    "disk_warning_threshold_percent": 75.0,  # if rotation can't keep it under 75%, raise a fault
+
+                    # throttle is to log 1 in every N+1 messages. Set to 0 to log all messages
+                    "topics": {
+                        "tag_solutions": {"name": "/camera_webserver/tag_solutions", "throttle": 0},
+                        # only want every few of these (2hz for side and 4hz front)
+                        "debug_image": {"name": "/*/apriltag_detector/debug_image", "throttle": 8},
+                        "camera_info": {"name": "/*/driver/camera_info", "throttle": 0},
+                        "rosout": {"name": "/rosout", "throttle": 0},
+                        "tf": {"name": "/tf", "throttle": 0},
+                        "tf_static": {"name": "/tf_static", "throttle": 0},
+                    },
+
+                    "event_snapshots": {
+                        "match_start": {
+                            "event_name": "match_start",
+                            "time_before": 5.0,
+                            "time_after": 2.5 * 60.0,  # 2.5 minutes after match start
+                            "tags": ["match", "frc"],
+                            "description": "",
+                        },
+                    },
+                }
+            ],
         )
     )
 

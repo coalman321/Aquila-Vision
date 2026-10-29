@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- Continuous Logger: reads the rotation threshold from the renamed `LoggerStatus` field
+  `disk_rotation_threshold_percent` (was `disk_max_usage_percent`). Needs a logger built after the
+  rename; with an older one the threshold reads as unset.
+
 ## 0.4.0
 
 - Continuous Logger: reads the logger's own status (`/log/logger_status`) and shows the disk

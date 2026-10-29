@@ -48,7 +48,7 @@ class LoggerNodeStatusTest : public ::testing::Test {
 
         rclcpp::NodeOptions options;
         options.append_parameter_override("log_path", log_dir_.string());
-        options.append_parameter_override("max_disk_usage_percent", 91.0);
+        options.append_parameter_override("rotation_threshold_percent", 91.0);
         options.append_parameter_override("disk_check_interval", DISK_CHECK_INTERVAL_S);
         options.append_parameter_override("disk_warning_threshold_percent", warningThresholdPercent());
         options.append_parameter_override("event_snapshots.crash.event_name", std::string("crash"));
@@ -165,7 +165,7 @@ TEST_F(LoggerNodeStatusTest, ReportsDiskAndConfiguredEvents) {
     spinUntilStatus([](const LoggerStatus&) { return true; });
 
     EXPECT_EQ(status_->log_path, log_dir_.string());
-    EXPECT_EQ(status_->disk_max_usage_percent, 91.0);
+    EXPECT_EQ(status_->disk_rotation_threshold_percent, 91.0);
     EXPECT_EQ(status_->disk_warning_threshold_percent, 85.0);
     EXPECT_GT(status_->disk_total_bytes, 0u);
     EXPECT_LE(status_->disk_free_bytes, status_->disk_total_bytes);

@@ -165,7 +165,7 @@ ros2 launch continuous_logger logger_with_config.launch.py
 ros2 launch continuous_logger logger.launch.py \
   log_path:=/data/logs \
   log_split_time:=120 \
-  max_disk_usage_percent:=85.0
+  rotation_threshold_percent:=85.0
 ```
 
 Or with ROS args:
@@ -173,7 +173,7 @@ Or with ROS args:
 ros2 run continuous_logger logger --ros-args \
   -p log_path:=/data/logs \
   -p log_split_time:=60 \
-  -p max_disk_usage_percent:=85.0
+  -p rotation_threshold_percent:=85.0
 ```
 
 ---
@@ -185,9 +185,11 @@ ros2 run continuous_logger logger --ros-args \
 The logger node accepts the following parameters:
 
 #### Topic Configuration
-- `topic_keys`: List of topic identifiers to configure
-- `<topic_key>.name`: Actual topic name to subscribe to
-- `<topic_key>.throttle`: Throttle count (0 = no throttle)
+- `topics.<key>.name`: Topic name to subscribe to. A `*` matches one name segment, so
+  `/*/driver/camera_info` logs `/front/driver/camera_info`, `/back/driver/camera_info` and so on. With a
+  pattern configured the logger keeps looking for new topics, so ones that start later are logged too;
+  with only plain names it stops once all of them are found.
+- `topics.<key>.throttle`: Log 1 in every N+1 messages (0 = log all)
 
 #### Log File Configuration
 - `log_path`: Path to the log directory (default: `/tmp/log`)
@@ -196,8 +198,8 @@ The logger node accepts the following parameters:
 - `log_split_size`: Max log size in bytes (default: max value)
 
 #### Disk Management Configuration
-- `max_disk_usage_percent`: Maximum disk usage percentage (default: 80.0)
-- `disk_warning_threshold_percent`: Warning threshold percentage (default: 70.0)
+- `rotation_threshold_percent`: Disk usage percentage at which the oldest logs no snapshot protects are deleted (default: 70.0)
+- `disk_warning_threshold_percent`: Warning threshold percentage (default: 80.0)
 - `disk_check_interval`: Interval for checking disk usage in seconds (default: 60.0)
 
 #### Event Snapshot Configuration
@@ -221,7 +223,7 @@ Create `config/logger.yaml`:
     log_split_time: 120  # 2 minutes
     
     # Disk management
-    max_disk_usage_percent: 85.0
+    rotation_threshold_percent: 85.0
     disk_warning_threshold_percent: 75.0
     disk_check_interval: 60.0
     
@@ -465,7 +467,7 @@ ros2 topic pub /log/metadata logging_msgs/msg/LogMetadata \
 The logger automatically manages disk space:
 
 ```yaml
-max_disk_usage_percent: 80.0          # Start deleting old MCAP files at 80% disk usage
+rotation_threshold_percent: 80.0          # Start deleting old MCAP files at 80% disk usage
 disk_warning_threshold_percent: 70.0   # Warn when disk usage exceeds 70%
 disk_check_interval: 60.0             # Check disk every 60 seconds
 ```
@@ -499,8 +501,8 @@ subscriber that joins late gets the latest one at once):
 | Field | Meaning |
 |-------|---------|
 | `stamp` | When the status was built |
-| `log_path`, `disk_usage_percent`, `disk_total_bytes`, `disk_free_bytes` | The filesystem the log directory is on. The percentage is the one rotation compares against `disk_max_usage_percent` |
-| `disk_max_usage_percent`, `disk_warning_threshold_percent` | The configured limits, so a reader can tell how close rotation is |
+| `log_path`, `disk_usage_percent`, `disk_total_bytes`, `disk_free_bytes` | The filesystem the log directory is on. The percentage is the one rotation compares against `disk_rotation_threshold_percent` |
+| `disk_rotation_threshold_percent`, `disk_warning_threshold_percent` | The configured limits, so a reader can tell how close rotation is |
 | `events` | One entry per `event_snapshots.<key>` configuration: its name, window, tags, description and `trigger_count`, the number of snapshots it has triggered (counting earlier runs), which is also the `<n>` of its next `event_<name>_<n>` snapshot |
 | `snapshots` | Every snapshot that is running (manual, not yet stopped) or pending (an event snapshot inside its `time_after` window), then the 50 most recently started completed ones, each group newest first. Times are epoch seconds, and `end_time` is -1 until the snapshot has finished |
 | `total_snapshot_count` | How many snapshots exist in all, including those `snapshots` leaves out |
@@ -861,7 +863,7 @@ ros2 bag info /data/extracted/event_collision_0
 | `log_prefix` | string | `log_` | Log directory prefix |
 | `log_split_time` | int | 30 | Split interval (seconds) |
 | `log_split_size` | int | max | Max file size (bytes) |
-| `max_disk_usage_percent` | double | 80.0 | Max disk usage (%) |
+| `rotation_threshold_percent` | double | 70.0 | Disk usage (%) at which old logs are rotated away |
 | `disk_warning_threshold_percent` | double | 70.0 | Warning threshold (%) |
 | `disk_check_interval` | double | 60.0 | Check interval (seconds) |
 | `topic_keys` | list | `['rosout']` | List of topic identifiers |
@@ -979,7 +981,7 @@ Recommended settings:
 #### Disk Space
 
 Monitor disk usage regularly:
-- Keep max_disk_usage_percent below 85%
+- Keep rotation_threshold_percent below 85%
 - Set warning_threshold_percent 10-15% below max
 - Ensure at least 20GB free space for system operations
 
@@ -1018,7 +1020,7 @@ Monitor disk usage regularly:
    df -h /data/logs
    ```
 
-2. Lower the max_disk_usage_percent parameter
+2. Lower the rotation_threshold_percent parameter
 
 3. Check if snapshots are preventing deletion:
    ```bash

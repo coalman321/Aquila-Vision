@@ -9,7 +9,7 @@
 
 namespace basin::log_util {
 
-LogManager::LogManager() : max_usage_percent_(80.0), warning_threshold_percent_(70.0) {}
+LogManager::LogManager() : rotation_threshold_percent_(80.0), warning_threshold_percent_(70.0) {}
 
 LogManager::~LogManager() {}
 
@@ -24,9 +24,9 @@ void LogManager::set_log_directory(const std::string& directory) {
     snapshot_writer_.set_recording_directory(directory);
 }
 
-void LogManager::set_disk_limits(double max_usage_percent, double warning_threshold_percent) {
+void LogManager::set_disk_limits(double rotation_threshold_percent, double warning_threshold_percent) {
     std::lock_guard<std::mutex> lock(mutex_);
-    max_usage_percent_ = max_usage_percent;
+    rotation_threshold_percent_ = rotation_threshold_percent;
     warning_threshold_percent_ = warning_threshold_percent;
 }
 
@@ -133,7 +133,7 @@ bool LogManager::check_and_rotate_logs() {
     double usage = get_disk_usage_percent();
 
     // Check if we need to delete logs
-    if (usage < max_usage_percent_) {
+    if (usage < rotation_threshold_percent_) {
         return false;
     }
 

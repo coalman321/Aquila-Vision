@@ -20,10 +20,10 @@ def generate_launch_description():
         description='Time between split files in seconds'
     )
 
-    max_disk_usage_arg = DeclareLaunchArgument(
-        'max_disk_usage_percent',
+    rotation_threshold_arg = DeclareLaunchArgument(
+        'rotation_threshold_percent',
         default_value='80.0',
-        description='Maximum disk usage percentage (0-100)'
+        description='Disk usage percentage (0-100) at which old logs are rotated away'
     )
 
     disk_warning_threshold_arg = DeclareLaunchArgument(
@@ -43,7 +43,7 @@ def generate_launch_description():
             'log_prefix': 'log_',
             'log_split_time': LaunchConfiguration('log_split_time'),
             'log_split_size': 2**63 - 1,  # max value
-            'max_disk_usage_percent': LaunchConfiguration('max_disk_usage_percent'),
+            'rotation_threshold_percent': LaunchConfiguration('rotation_threshold_percent'),
             'disk_warning_threshold_percent': LaunchConfiguration(
                 'disk_warning_threshold_percent'
             ),
@@ -61,7 +61,7 @@ def generate_launch_description():
     return LaunchDescription([
         log_path_arg,
         log_split_time_arg,
-        max_disk_usage_arg,
+        rotation_threshold_arg,
         disk_warning_threshold_arg,
         logger_node,
     ])

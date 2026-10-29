@@ -26,6 +26,27 @@ def get_app_dir(default_path: str = "/etc/app") -> Union[str, os.PathLike]:
         os.makedirs(app_dir, exist_ok=True)
     return app_dir
 
+def get_log_dir(default_path: str = "/var/lib/aquila/logs") -> Union[str, os.PathLike]:
+    """
+    Get the directory the continuous logger writes its logs to.
+
+    Checks the AQUILA_LOG_DIR environment variable first.
+    If the directory doesn't exist or isn't writable, falls back to /tmp/camera_webserver/logs.
+
+    Args:
+        default_path: The default directory to use if the environment variable is not set.
+                     Defaults to "/var/lib/aquila/logs", which setup-jetson.sh creates.
+
+    Returns:
+        The path to the log directory.
+    """
+    log_dir = os.getenv("AQUILA_LOG_DIR", default_path)
+    if not (os.path.exists(log_dir) and os.access(log_dir, os.W_OK)):
+        print("Cannot access log directory at {}, falling back to /tmp".format(log_dir))
+        log_dir = os.path.join("/", "tmp", "camera_webserver", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+    return log_dir
+
 def get_team_number(app_dir: Union[str, os.PathLike]) -> int:
     """
     Get the team number from a file in the application directory.

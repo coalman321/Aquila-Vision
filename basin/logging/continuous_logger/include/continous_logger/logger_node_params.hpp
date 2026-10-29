@@ -36,7 +36,7 @@ struct LoggerParams : public basin::node_core::NodeParams {
     long log_split_size{ std::numeric_limits<long>::max() };
 
     ///< Maximum disk usage percentage before rotating logs (0-100)
-    double max_disk_usage_percent{ 70.0 };
+    double rotation_threshold_percent{ 70.0 };
 
     ///< Disk usage warning threshold percentage (0-100)
     double disk_warning_threshold_percent{ 80.0 };
@@ -66,7 +66,7 @@ struct LoggerParams : public basin::node_core::NodeParams {
         createParam("manifest_dir", manifest_dir);
 
         // Disk management configurations
-        createParam("max_disk_usage_percent", max_disk_usage_percent);
+        createParam("rotation_threshold_percent", rotation_threshold_percent);
         createParam("disk_warning_threshold_percent", disk_warning_threshold_percent);
         createParam("disk_check_interval", disk_check_interval);
 

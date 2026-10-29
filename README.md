@@ -44,11 +44,30 @@ It uploads the tarball, checks its SHA-256, unpacks it to `/opt/aquila-vision/re
 ([launch.yaml](deploy/launch.yaml)). It loads `camera_webserver`'s two launch descriptions:
 
 - `daemon.prod.py`: `camera_web` (web UI and API, port 5800), `proxy_client` (roboRIO bridge, UDP 5809),
-  `webrtc_streamer_node` (port 5801), `camera_cal_node`.
+  `webrtc_streamer_node` (port 5801), `camera_cal_node`, `continuous_logger_node` (see [Pulling logs](#pulling-logs)).
 - `application.prod.py`: for every enabled source in `/etc/app/camera_sources/*.json`, a `basler_driver` and a
   `detector_node` (AprilTags).
 
 Each process's output goes to `/dev/shm/<name>.out`; the service's own is in `journalctl -u aquila-vision`.
+
+### Pulling logs
+
+`continuous_logger_node` records to `/var/lib/aquila/logs` (`AQUILA_LOG_DIR` in `/etc/aquila/env` overrides
+it). Each service start opens a new `log_<n>/` directory of MCAP files, split every 30 s, with `snapshots.yaml`
+beside them. It records the tag solutions, `/rosout`, `/tf`, `/tf_static`, and every camera's `camera_info` and
+AprilTag debug image (1 in 9). Cameras enabled after startup are picked up without a restart. A `match_start`
+event from the roboRIO snapshots that match (5 s before to 2.5 min after). Snapshots are kept; once the disk
+is 60% full, the oldest other logs are deleted.
+
+Copy them off with:
+
+```
+rsync -av <user>@<host>:/var/lib/aquila/logs/ ./logs/
+```
+
+and open the MCAP files in Foxglove. To cut a snapshot into its own bag, run
+`bazel run //basin/logging/continuous_logger:snapshot_extractor_cli` on the copy (see
+[basin/logging/continuous_logger](basin/logging/continuous_logger/README.md)).
 
 ### Setting up SSH access
 

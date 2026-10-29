@@ -229,7 +229,7 @@ Manages log directories and disk usage.
 ##### `set_log_directory(directory: str)`
 Sets the log directory to manage.
 
-##### `set_disk_limits(max_usage_percent: float, warning_threshold_percent: float)`
+##### `set_disk_limits(rotation_threshold_percent: float, warning_threshold_percent: float)`
 Sets disk usage limits (both values should be 0-100).
 
 ##### `scan_log_directory() -> int`
@@ -254,7 +254,7 @@ Checks disk usage and rotates old logs if needed. Returns True if rotation was p
 ```python
 manager = LogManager()
 manager.set_log_directory('/path/to/logs')
-manager.set_disk_limits(max_usage_percent=80, warning_threshold_percent=70)
+manager.set_disk_limits(rotation_threshold_percent=80, warning_threshold_percent=70)
 
 num_logs = manager.scan_log_directory()
 usage = manager.get_disk_usage_percent()
@@ -453,7 +453,7 @@ from log_util_py import LogManager
 
 manager = LogManager()
 manager.set_log_directory('/path/to/logs')
-manager.set_disk_limits(max_usage_percent=80, warning_threshold_percent=70)
+manager.set_disk_limits(rotation_threshold_percent=80, warning_threshold_percent=70)
 
 num_logs = manager.scan_log_directory()
 usage = manager.get_disk_usage_percent()

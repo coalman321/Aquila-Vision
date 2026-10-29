@@ -117,7 +117,7 @@ itself, so a logger that is sending that status is treated as up.
   once nothing has for 5 s, meaning what follows may be out of date. Before the first status it
   says so instead, or that the topic isn't advertised.
 - **Disk**: a bar of the log directory's filesystem, green until the logger's warning threshold,
-  yellow until its rotation threshold (`max_disk_usage_percent`, where it starts deleting old logs
+  yellow until its rotation threshold (`rotation_threshold_percent`, where it starts deleting old logs
   that no snapshot protects) and red beyond, with the free and total space and both thresholds.
 - **Snapshots**: what the logger reports: name, status, trigger, start and end time and tags.
   **Running** is a manual snapshot that hasn't been stopped, **Pending** an event snapshot still

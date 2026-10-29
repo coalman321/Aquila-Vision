@@ -84,7 +84,7 @@ PYBIND11_MODULE(_log_util_py, m) {
         .def(py::init<>())
         .def("set_log_directory", &LogManager::set_log_directory, py::arg("directory"),
              "Sets the log directory to manage")
-        .def("set_disk_limits", &LogManager::set_disk_limits, py::arg("max_usage_percent"),
+        .def("set_disk_limits", &LogManager::set_disk_limits, py::arg("rotation_threshold_percent"),
              py::arg("warning_threshold_percent"), "Sets disk usage limits (both values should be 0-100)")
         .def("scan_log_directory", &LogManager::scan_log_directory,
              "Scans the log directory for MCAP files and snapshots. Returns number of MCAP files found.")

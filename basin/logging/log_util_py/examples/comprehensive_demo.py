@@ -168,7 +168,7 @@ def demo_log_manager(log_dir):
 
     manager = LogManager()
     manager.set_log_directory(log_dir)
-    manager.set_disk_limits(max_usage_percent=80.0, warning_threshold_percent=70.0)
+    manager.set_disk_limits(rotation_threshold_percent=80.0, warning_threshold_percent=70.0)
 
     # Scan directory
     num_logs = manager.scan_log_directory()

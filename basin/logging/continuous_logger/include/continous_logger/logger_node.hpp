@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <rclcpp/node.hpp>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,19 @@ struct LoggedTopic {
     std::function<void(const std::shared_ptr<const rclcpp::SerializedMessage>)> callback{};
 };
 
+/// @brief A configured topic name containing `*`. Each `*` matches one name segment, so `/*/driver/camera_info`
+/// matches `/front/driver/camera_info` but not `/a/b/driver/camera_info`
+struct TopicPattern {
+    ///< The pattern as configured
+    std::string pattern{};
+
+    ///< The pattern compiled to a regex
+    std::regex regex{};
+
+    ///< Upper limit of the throttle counter for topics matching this pattern
+    int max_throttle{ 0 };
+};
+
 class LoggerNode : public basin::node_core::NodeCore {
    public:
     LoggerNode(const rclcpp::NodeOptions& options);
@@ -48,8 +62,8 @@ class LoggerNode : public basin::node_core::NodeCore {
     ~LoggerNode();
 
    private:
-    /// @brief Attempt to discover the topics we have not yet found. Will loop until
-    /// all requested topics are discovered and subscribed
+    /// @brief Attempt to discover the topics we have not yet found. Will loop until all requested topics are
+    /// discovered and subscribed, or forever when a topic pattern is configured so later topics are picked up
     void discoverTopics();
 
     /// @brief Callback function for receiving new log metadata. This handles both events and metadata
@@ -120,8 +134,12 @@ class LoggerNode : public basin::node_core::NodeCore {
     ///< Node parameters for configuration
     std::unique_ptr<LoggerParams> params_;
 
-    ///< List of generic topic subscriptions for capturing data
-    std::vector<LoggedTopic> topics_;
+    ///< Generic topic subscriptions for capturing data, keyed by topic name. A map so each entry stays put
+    ///< while discovery adds more, as its subscription's callback holds a reference to it
+    std::map<std::string, LoggedTopic> topics_;
+
+    ///< Configured topic patterns, matched against every topic discovery sees
+    std::vector<TopicPattern> topic_patterns_;
 
     ///< Log writing instance
     std::unique_ptr<log_util::LogWriter> log_writer_;

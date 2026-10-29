@@ -175,7 +175,7 @@ Monitors disk usage, manages log files, and handles log rotation while protectin
 
 log_util::LogManager manager;
 manager.set_log_directory("/path/to/logs");
-manager.set_disk_limits(80.0, 70.0); // max 80%, warn at 70%
+manager.set_disk_limits(80.0, 70.0); // rotate at 80%, warn at 70%
 
 // Scan existing logs
 size_t num_logs = manager.scan_log_directory();
