@@ -61,6 +61,12 @@ void WebRTCStreamer::discoveryLoop() {
                 }
                 if (!matches_pattern) continue;
 
+                bool excluded = false;
+                for (const auto& pattern : params_->discovery_exclude_patterns) {
+                    if (topic_name.find(pattern) != std::string::npos) { excluded = true; break; }
+                }
+                if (excluded) continue;
+
                 std::lock_guard<std::mutex> lk(topics_mutex_);
                 if (available_topics_.count(topic_name) == 0) {
                     RCLCPP_INFO(this->get_logger(), "Discovered new image topic: %s", topic_name.c_str());

@@ -7,6 +7,8 @@
 # ROS_HOME, created at runtime by nodes (logs, etc.)
 /.ros/
 
+/.pnpm-store/
+
 # GitLab CI Bazel/bazelisk caches and collected test reports
 /.ci-cache/
 /test-reports/

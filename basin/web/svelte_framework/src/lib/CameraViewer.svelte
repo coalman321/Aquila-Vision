@@ -1,18 +1,20 @@
 <script lang="ts">
 	import { untrack } from "svelte";
 	import CameraViewerBase from "./CameraViewerBase.svelte";
-	import type { StreamInfo, StreamStats } from "./CameraViewerBase.svelte";
+	import type { StreamFilter, StreamInfo, StreamStats } from "./CameraViewerBase.svelte";
 
 	// Props
 	let {
 		serverUrl = "http://localhost:8080",
 		defaultStream = "default",
+		streamFilter,
 		width = 640,
 		height = 480,
 		className = "",
 	}: {
 		serverUrl?: string;
 		defaultStream?: string;
+		streamFilter?: StreamFilter;
 		width?: number;
 		height?: number;
 		className?: string;
@@ -104,6 +106,7 @@
 			bind:this={base}
 			{serverUrl}
 			bind:streamId={selectedStreamId}
+			{streamFilter}
 			{width}
 			{height}
 			bind:isStreaming

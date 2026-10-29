@@ -281,7 +281,7 @@
     <div class="camera-panel">
       <h5>Debug Image</h5>
       <div class="camera-wrapper">
-        <CameraViewer serverUrl={viewerUrl} defaultStream={debugImageTopic} />
+        <CameraViewer serverUrl={viewerUrl} defaultStream={debugImageTopic} streamFilter="/camera_cal" />
       </div>
     </div>
 

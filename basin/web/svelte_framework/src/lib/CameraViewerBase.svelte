@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from "svelte";
+	import { onMount, onDestroy, tick, untrack } from "svelte";
 	import type { Snippet } from "svelte";
 
 	// ── Public types ─────────────────────────────────────────────────────────
@@ -8,6 +8,14 @@
 		stream_id: string;
 		active_peers: number;
 	}
+
+	/**
+	 * Restricts which streams are offered. A string (or list of strings) is a
+	 * topic namespace: "/camera_cal" matches "/camera_cal/debug_image" but not
+	 * "/camera_cal2/image". A function receives the stream ID and returns
+	 * whether to keep it.
+	 */
+	export type StreamFilter = string | string[] | ((streamId: string) => boolean);
 
 	export interface StreamSettings {
 		targetBitrate?: number;  // bits/s, e.g. 2_000_000
@@ -37,6 +45,8 @@
 		className?: string;
 		/** Automatically start the stream after mount */
 		autostart?: boolean;
+		/** Only offer streams matching this filter (all streams when omitted) */
+		streamFilter?: StreamFilter;
 		/** Reactive output: whether video is currently flowing */
 		isStreaming?: boolean;
 		/** Reactive output: last error message, or null when clear */
@@ -56,6 +66,7 @@
 		height = 480,
 		className = "",
 		autostart = true,
+		streamFilter,
 		isStreaming = $bindable(false),
 		error = $bindable<string | null>(null),
 		availableStreams = $bindable<StreamInfo[]>([]),
@@ -76,6 +87,8 @@
 	let peerConnection: RTCPeerConnection | null = null;
 	let peerId: string | null = null;
 	let statsInterval: number | null = null;
+	// Unfiltered list from the server; `availableStreams` is the filtered view.
+	let allStreams: StreamInfo[] = [];
 
 	// ── Public API ────────────────────────────────────────────────────────────
 
@@ -145,13 +158,35 @@
 			const response = await fetch(`${serverUrl}/webrtc/streams`);
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
 			const data = await response.json();
-			availableStreams = data.streams ?? [];
-			if (availableStreams.length > 0 && !streamId) {
-				streamId = availableStreams[0].stream_id;
-			}
+			allStreams = data.streams ?? [];
+			_applyFilter();
 		} catch (err) {
 			error = `Failed to load streams: ${err instanceof Error ? err.message : String(err)}`;
 		}
+	}
+
+	function _matchesFilter(id: string): boolean {
+		if (!streamFilter) return true;
+		if (typeof streamFilter === "function") return streamFilter(id);
+		const namespaces = Array.isArray(streamFilter) ? streamFilter : [streamFilter];
+		return namespaces.some((ns) => {
+			const prefix = ns.replace(/\/+$/, "");
+			return prefix === "" || id === prefix || id.startsWith(`${prefix}/`);
+		});
+	}
+
+	/**
+	 * Recompute `availableStreams` from the server list. If the selected stream
+	 * is excluded by the filter, select the first matching one instead.
+	 * Returns true when the selection changed.
+	 */
+	function _applyFilter(): boolean {
+		availableStreams = allStreams.filter((s) => _matchesFilter(s.stream_id));
+		if (streamId && _matchesFilter(streamId)) return false;
+		const next = availableStreams[0]?.stream_id ?? "";
+		if (next === streamId) return false;
+		streamId = next;
+		return true;
 	}
 
 	async function _startStream(): Promise<void> {
@@ -370,6 +405,24 @@
 
 		const refreshTimer = setInterval(_loadStreams, 5000);
 		return () => clearInterval(refreshTimer);
+	});
+
+	// Re-filter when the filter prop changes; follow the selection if it moved
+	// off a stream that was playing.
+	let filterInitialized = false;
+	$effect(() => {
+		streamFilter;
+		untrack(() => {
+			if (!filterInitialized) {
+				filterInitialized = true;
+				return;
+			}
+			const wasStreaming = isStreaming;
+			if (_applyFilter()) {
+				if (wasStreaming && streamId) _startStream();
+				else if (!streamId) _stopStream();
+			}
+		});
 	});
 
 	onDestroy(() => {
