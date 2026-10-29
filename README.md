@@ -4,9 +4,7 @@
 
 # Aquila Vision
 
-FRC 4143's GPU accelerated vision system, run on a Jetson Orin Nano. It reads Basler USB3 Vision cameras, detects AprilTags (and, optionally, objects with TensorRT) in each camera's images, and sends the results to the roboRIO over UDP. A web UI configures camera sources, pipelines, field maps and calibrations, and shows live video over WebRTC. It is built with Bazel on ROS 2 Lyrical and the in-house `basin` libraries, and deployed as a single tarball.## Deploying to a Jetson
-
-Aquila Vision ships as one tarball that runs on a **Jetson Orin Nano with JetPack 7.2.1** (Jetson Linux 39.2.1, Ubuntu 24.04). The tarball carries its own CUDA, TensorRT, ROS and Python; the Jetson only supplies the kernel, the GPU driver (`libcuda`), glibc and `libstdc++`.
+FRC 4143's GPU accelerated vision system, run on a Jetson Orin Nano. It reads Basler USB3 Vision cameras, detects AprilTags (and, optionally, objects with TensorRT) in each camera's images, and sends the results to the roboRIO over UDP. A web UI configures camera sources, pipelines, field maps and calibrations, and shows live video over WebRTC. It is built with Bazel on ROS 2 Lyrical and the in-house `basin` libraries, and deployed as a single tarball.
 
 ## Application Installation
 
