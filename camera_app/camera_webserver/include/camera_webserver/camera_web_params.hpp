@@ -19,6 +19,8 @@ struct CameraWebParams : public basin::node_core::NodeParams {
 
     std::string camera_base_frame{ "base_link" };  ///< Base frame for camera transforms
 
+    std::string log_dir{ "/var/lib/aquila/logs" };  ///< The continuous logger's log directory, for snapshot downloads
+
     // basin::webrtc_streamer::BandwidthConfig bandwidth_config;  ///< WebRTC bandwidth configuration
 
     CameraWebParams(rclcpp::Node* node) : basin::node_core::NodeParams(node) {
@@ -34,6 +36,8 @@ struct CameraWebParams : public basin::node_core::NodeParams {
         createParam("field.child_prefix", field_map_child_prefix);
 
         createParam("camera.base_frame", camera_base_frame);
+
+        createParam("log_dir", log_dir);
     }
 };
 

@@ -113,6 +113,38 @@ Endpoints
 - `PUT /api/files/<filename>`: upload via raw body
 - `DELETE /api/files/<filename>`: delete file
 
+## Zip Stream
+
+`//basin/web/web_core:zip_stream` (`basin/web_core/zip_stream.hpp`) builds a ZIP archive of files, and of
+content held in memory, for a route to stream. Entries are stored uncompressed, which suits data that is
+already compressed (such as MCAP logs). Every file is opened, measured and checksummed when it is added, so the
+archive's exact size is known before it is sent, which gives the browser a progress bar. Its headers need no
+data descriptors, so every unzipper reads it. Zip64 records are added only when something reaches 4 GiB.
+
+Files stay open until the stream is destroyed, so a file deleted mid-download is still sent whole. Only the
+size a file had when it was added is sent.
+
+```cpp
+#include "basin/web_core/zip_stream.hpp"
+
+auto zip = std::make_shared<basin::web_core::ZipStream>();
+zip->addFile("bundle/data.mcap", "/var/lib/app/data.mcap");  // throws std::runtime_error if unreadable
+zip->addData("bundle/info.yaml", "id: bundle\n");
+zip->finish();
+
+res.set_header("Content-Disposition", "attachment; filename=\"bundle.zip\"");
+res.set_content_provider(zip->size(), "application/zip",
+                         [zip](size_t offset, size_t length, httplib::DataSink& sink) {
+                             std::vector<char> buffer(std::min<size_t>(length, 256 * 1024));
+                             size_t n = zip->read(offset, buffer.data(), buffer.size());
+                             return n > 0 && sink.write(buffer.data(), n);
+                         });
+```
+
+`read()` serves any byte range, so httplib's handling of `Range` requests works with it too. A stream is not
+thread safe; give each download its own. The camera web UI's snapshot download (see
+`camera_app/camera_webserver/src/logger/logger_handler.cpp`) uses it.
+
     "system_name": "example_system",
     "active_config": "default",
     "processes": [

@@ -1,7 +1,13 @@
 #include "camera_webserver/logger/logger_handler.hpp"
 
+#include <yaml-cpp/yaml.h>
+
 #include <algorithm>
 #include <array>
+#include <basin/web_core/zip_stream.hpp>
+#include <cctype>
+#include <ctime>
+#include <filesystem>
 #include <nlohmann/json.hpp>
 #include <rclcpp/logging.hpp>
 #include <regex>
@@ -70,6 +76,54 @@ json statusToJson(const logging_msgs::msg::LoggerStatus& status) {
     return j;
 }
 
+/// Largest piece of a download read and sent at once
+constexpr size_t DOWNLOAD_CHUNK = 256 * 1024;
+
+std::string isoTime(int64_t epoch_s) {
+    time_t t = static_cast<time_t>(epoch_s);
+    struct tm utc {};
+    gmtime_r(&t, &utc);
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    return buffer;
+}
+
+/// A snapshot ID made safe for a file name: anything but [A-Za-z0-9._-] becomes '_'
+std::string safeFileName(const std::string& id) {
+    std::string name = id;
+    for (char& c : name) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '.' && c != '_' && c != '-') {
+            c = '_';
+        }
+    }
+    return name;
+}
+
+/// The snapshot.yaml put in a download: the snapshot's metadata and the files that came with it
+std::string snapshotYaml(const basin::log_util::SnapshotInfo& snapshot, const std::vector<std::string>& files) {
+    YAML::Emitter out;
+    out << YAML::BeginMap;
+    out << YAML::Key << "id" << YAML::Value << snapshot.id;
+    out << YAML::Key << "trigger" << YAML::Value << snapshot.trigger;
+    out << YAML::Key << "description" << YAML::Value << snapshot.description;
+    out << YAML::Key << "tags" << YAML::Value << YAML::BeginSeq;
+    for (const auto& tag : snapshot.tags) {
+        out << tag;
+    }
+    out << YAML::EndSeq;
+    out << YAML::Key << "start_time" << YAML::Value << snapshot.start_time;
+    out << YAML::Key << "end_time" << YAML::Value << snapshot.end_time;
+    out << YAML::Key << "start_time_utc" << YAML::Value << isoTime(snapshot.start_time);
+    out << YAML::Key << "end_time_utc" << YAML::Value << isoTime(snapshot.end_time);
+    out << YAML::Key << "files" << YAML::Value << YAML::BeginSeq;
+    for (const auto& file : files) {
+        out << file;
+    }
+    out << YAML::EndSeq;
+    out << YAML::EndMap;
+    return std::string(out.c_str()) + "\n";
+}
+
 void setError(httplib::Response& res, int status, const std::string& message) {
     res.status = status;
     res.set_content(json{ { "error", message } }.dump(), "application/json");
@@ -103,6 +157,8 @@ void setServiceResponse(httplib::Response& res, const logging_msgs::srv::Snapsho
 
 LoggerHandler::LoggerHandler(std::shared_ptr<basin::web_core::WebNode> web_node, LoggerHandlerConfig config) :
     config_(config) {
+    log_manager_.set_log_directory(config_.log_dir);
+
     // Create a mutually-exclusive callback group so the dedicated executor
     // can spin the service client without conflicting with the main executor.
     client_cbg_ =
@@ -225,11 +281,115 @@ LoggerHandler::LoggerHandler(std::shared_ptr<basin::web_core::WebNode> web_node,
         }
     });
 
+    // GET /api/logger/snapshot/download?id=<snapshot id>, and HEAD, which httplib routes here too
+    web_node->getServer().Get("/api/logger/snapshot/download",
+                              [this](const httplib::Request& req, httplib::Response& res) { handleDownload(req, res); });
+
     RCLCPP_INFO(logger_,
                 "LoggerHandler initialised\n"
                 "  service : %s\n"
-                "  status  : %s",
-                config_.snapshot_service.c_str(), config_.status_topic.c_str());
+                "  status  : %s\n"
+                "  logs    : %s",
+                config_.snapshot_service.c_str(), config_.status_topic.c_str(), config_.log_dir.c_str());
+}
+
+// ---------------------------------------------------------------------------
+
+void LoggerHandler::handleDownload(const httplib::Request& req, httplib::Response& res) {
+    std::string id = req.get_param_value("id");
+    if (id.empty()) {
+        setError(res, 400, "Missing required parameter: id");
+        return;
+    }
+
+    // Find the snapshot and its logs as the logger sees them. Paths only ever come from this scan
+    basin::log_util::SnapshotInfo snapshot;
+    std::vector<std::string> files;
+    try {
+        log_manager_.scan_log_directory();
+        snapshot = log_manager_.get_snapshot_writer().get_snapshot(id);
+        files = log_manager_.get_snapshot_log_files(id);
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(logger_, "Failed to scan log directory '%s': %s", config_.log_dir.c_str(), e.what());
+        setError(res, 500, "Failed to read the log directory");
+        return;
+    }
+    if (snapshot.id.empty()) {
+        setError(res, 404, "Snapshot " + id + " does not exist");
+        return;
+    }
+    if (snapshot.end_time == -1) {
+        setError(res, 409, "Snapshot " + id + " is still recording");
+        return;
+    }
+    if (files.empty()) {
+        setError(res, 404, "Snapshot " + id + " has no logs left on disk");
+        return;
+    }
+    if (active_downloads_.load() >= config_.max_concurrent_downloads) {
+        setError(res, 429, "Too many downloads in progress, try again shortly");
+        return;
+    }
+    if (req.method == "HEAD") {
+        res.status = 200;
+        return;
+    }
+
+    if (active_downloads_.fetch_add(1) >= config_.max_concurrent_downloads) {
+        active_downloads_--;
+        setError(res, 429, "Too many downloads in progress, try again shortly");
+        return;
+    }
+
+    std::sort(files.begin(), files.end());
+    auto zip = std::make_shared<basin::web_core::ZipStream>();
+    std::vector<std::string> added;
+    try {
+        for (const auto& file : files) {
+            std::string name = std::filesystem::path(file).filename().string();
+            try {
+                zip->addFile(id + "/" + name, file);
+                added.push_back(name);
+            } catch (const std::runtime_error& e) {
+                // Rotated away since the scan; the rest still make a useful download
+                RCLCPP_WARN(logger_, "Leaving %s out of snapshot %s: %s", name.c_str(), id.c_str(), e.what());
+            }
+        }
+        if (added.empty()) {
+            active_downloads_--;
+            setError(res, 404, "Snapshot " + id + " has no logs left on disk");
+            return;
+        }
+        zip->addData(id + "/snapshot.yaml", snapshotYaml(snapshot, added));
+        zip->finish();
+    } catch (const std::exception& e) {
+        active_downloads_--;
+        RCLCPP_ERROR(logger_, "Failed to prepare download of snapshot %s: %s", id.c_str(), e.what());
+        setError(res, 500, "Failed to read the snapshot's logs");
+        return;
+    }
+
+    RCLCPP_INFO(logger_, "Sending snapshot %s: %zu files, %lu bytes", id.c_str(), added.size(),
+                static_cast<unsigned long>(zip->size()));
+
+    res.set_header("Content-Disposition", "attachment; filename=\"" + safeFileName(id) + ".zip\"");
+    res.set_content_provider(
+        zip->size(), "application/zip",
+        [this, zip, id](size_t offset, size_t length, httplib::DataSink& sink) {
+            try {
+                std::vector<char> buffer(std::min(length, DOWNLOAD_CHUNK));
+                size_t n = zip->read(offset, buffer.data(), buffer.size());
+                return n > 0 && sink.write(buffer.data(), n);
+            } catch (const std::exception& e) {
+                RCLCPP_ERROR(logger_, "Failed to send snapshot %s: %s", id.c_str(), e.what());
+                return false;
+            }
+        },
+        [this, zip, id](bool success) {
+            // The stream's files close once httplib drops this and the provider
+            active_downloads_--;
+            RCLCPP_INFO(logger_, "Snapshot %s download %s", id.c_str(), success ? "finished" : "stopped");
+        });
 }
 
 // ---------------------------------------------------------------------------

@@ -166,6 +166,33 @@
     }
   }
 
+  // A HEAD response has no body, so its failures are explained here
+  const downloadErrors: Record<number, string> = {
+    404: "The snapshot or its logs are no longer on disk.",
+    409: "The snapshot is still recording.",
+    429: "Too many downloads in progress; try again once one finishes.",
+  };
+
+  async function handleDownload(snap: Snapshot) {
+    const url = `${base()}/api/logger/snapshot/download?id=${encodeURIComponent(snap.id)}`;
+    // Check first, so a failure shows here rather than as a broken download in the browser
+    try {
+      const res = await fetch(url, { method: "HEAD" });
+      if (!res.ok) {
+        addToast(downloadErrors[res.status] ?? `Download failed: HTTP ${res.status}`, "error");
+        return;
+      }
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : String(e), "error");
+      return;
+    }
+    // A plain link, so the browser streams it straight to disk with its own progress
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "";
+    link.click();
+  }
+
   async function handleRemove(snap: Snapshot) {
     if (
       !confirm(
@@ -372,6 +399,13 @@
                 <td>{snap.description}</td>
                 <td>
                   {#if snap.state === "complete"}
+                    <button
+                      class="btn-download"
+                      on:click={() => handleDownload(snap)}
+                      title="Download the snapshot's log files as a zip"
+                    >
+                      Download
+                    </button>
                     <button
                       class="btn-remove"
                       on:click={() => handleRemove(snap)}
@@ -607,6 +641,22 @@
 
   .btn-primary:hover:not(:disabled) {
     background: #b91c1c;
+  }
+
+  .btn-download {
+    padding: 3px 10px;
+    margin-right: 6px;
+    border-radius: 6px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #d1d5db;
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .btn-download:hover {
+    background: #2a2a2a;
   }
 
   .btn-remove {

@@ -14,6 +14,8 @@ def generate_launch_description() -> list:
     # permission to write to it. if we dont, fall back to /tmp
     app_dir = get_app_dir()
     team = get_team_number(app_dir)
+    # shared by the logger, which writes it, and the web UI, which downloads snapshots from it
+    log_dir = get_log_dir()
 
     print(f"Detected team number: {team}")
 
@@ -30,6 +32,7 @@ def generate_launch_description() -> list:
             params=[
                 {
                     "app_dir": app_dir,
+                    "log_dir": log_dir,
                     "port": 5800,
                     "enable_static_content": True,
                     "field": {
@@ -110,7 +113,7 @@ def generate_launch_description() -> list:
             executable="continuous_logger_node",
             params=[
                 {
-                    "log_path": get_log_dir(),
+                    "log_path": log_dir,
                     "log_split_size": 100 * 1024 * 1024,  # 100 MB
                     "log_split_time": 30,  # split logs every 30 seconds
                     "rotation_threshold_percent": 60.0, # Threshold to begin rotation (effective max disk usage)

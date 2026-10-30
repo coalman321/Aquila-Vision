@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <basin/log_util/log_manager.hpp>
 #include <basin/web_core/web_node.hpp>
 #include <chrono>
 #include <logging_msgs/msg/logger_status.hpp>
@@ -23,6 +25,10 @@ struct LoggerHandlerConfig {
     std::chrono::milliseconds service_timeout{ std::chrono::seconds(5) };
     /// A status older than this means the logger is not running
     std::chrono::milliseconds stale_after{ std::chrono::seconds(2) };
+    /// The continuous logger's log directory, read directly to download snapshots
+    std::string log_dir{ "/var/lib/aquila/logs" };
+    /// Most snapshot downloads served at once; each reads its logs from disk twice
+    int max_concurrent_downloads{ 2 };
 };
 
 /// @brief Web API component that exposes the continuous logger's status and
@@ -62,6 +68,15 @@ struct LoggerHandlerConfig {
 ///       success, 404 for an unknown snapshot, 409 for one still recording or
 ///       being uploaded, and 504 if the logger is unavailable.
 ///
+///   GET  /api/logger/snapshot/download?id=<snapshot id>
+///       Streams <id>.zip: the snapshot's MCAP files, whole, as they are on
+///       disk (every split overlapping its window, the same files the logger
+///       protects for it), plus a snapshot.yaml of its metadata. Read straight
+///       from log_dir, so it works without the logger running. Responds 404
+///       for an unknown snapshot or one whose logs are gone, 409 for one still
+///       recording, and 429 when max_concurrent_downloads are in progress.
+///       HEAD runs the same checks without building the archive.
+///
 /// Service calls are fully synchronous from the HTTP handler's perspective;
 /// a dedicated SingleThreadedExecutor spins the service client's callback
 /// group so that the main node executor is never blocked.
@@ -80,6 +95,9 @@ class LoggerHandler {
     /// @return shared_ptr to the response, or nullptr on timeout/error.
     std::shared_ptr<SnapshotRequest::Response> callService(std::shared_ptr<SnapshotRequest::Request> request);
 
+    /// @brief Handles GET and HEAD of /api/logger/snapshot/download
+    void handleDownload(const httplib::Request& req, httplib::Response& res);
+
     // --- ROS 2 interfaces ---
     rclcpp::Client<SnapshotRequest>::SharedPtr snapshot_client_;
     rclcpp::Subscription<LoggerStatus>::SharedPtr status_sub_;
@@ -95,6 +113,12 @@ class LoggerHandler {
     mutable std::mutex status_mutex_;
     std::optional<LoggerStatus> latest_status_{};
     std::chrono::steady_clock::time_point latest_status_time_{};
+
+    // --- Snapshot downloads ---
+    /// Reads the log directory to find each snapshot's logs. Only ever scanned and queried, never asked to
+    /// rotate, so it changes nothing the logger owns
+    basin::log_util::LogManager log_manager_;
+    std::atomic<int> active_downloads_{ 0 };
 
     LoggerHandlerConfig config_;
     rclcpp::Logger logger_{ rclcpp::get_logger("LoggerHandler") };
