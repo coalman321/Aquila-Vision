@@ -8,12 +8,6 @@ The Production Logging package provides a complete suite of tools for production
 
 ## Package Structure
 
-Vendored into this monorepo from the standalone
-[production-logging](https://gitlab.tuckers-workshop.xyz/robotics/basin/production-logging)
-repo, which is now **superseded for development** — make changes here. These
-are Bazel-only (no `package.xml`/`CMakeLists.txt`, so not colcon-buildable),
-except `ros2prod_log_cli`, see below.
-
 ### Core Packages
 
 - **[continuous_logger](continuous_logger/README.md)** (`//basin/logging/continuous_logger`) - Main ROS2 node and CLI tools for continuous logging
@@ -53,12 +47,6 @@ bazel run //basin/logging/continuous_logger:snapshot_extractor_cli -- extract /t
 bazel run //basin/logging/log_util_py:query_snapshots -- list /tmp/log
 ```
 
-The `ros2 run ...`/`ros2 launch ...`/`colcon build ...` commands in the
-package READMEs below come from the colcon original; the mapping is
-`ros2 run continuous_logger snapshot_extractor_cli` -> `bazel run
-//basin/logging/continuous_logger:snapshot_extractor_cli --`. The node's
-executable is `logger_node`, as the launch files use, not `logger`. There is
-no Bazel equivalent of `ros2 launch` for it (see below).
 
 ## Package Documentation
 
@@ -78,7 +66,7 @@ Production Logging Ecosystem:
   continuous_logger (Application Layer)
   ├── LoggerNode - Main ROS2 orchestrator
   ├── snapshot_extractor_cli - CLI extraction tool
-  └── Launch files & configurations
+  └── Default configuration (config/logger.yaml)
   
   log_util (Core Library)
   ├── LogWriter - MCAP file writing
