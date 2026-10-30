@@ -153,8 +153,6 @@ The logger node accepts the following parameters:
 
 ### Example Configuration File
 
-Create `config/logger.yaml`:
-
 ```yaml
 /**:
   ros__parameters:

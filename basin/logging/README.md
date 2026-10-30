@@ -35,9 +35,8 @@ The Production Logging package provides a complete suite of tools for production
 bazel build //basin/logging/...
 bazel test //basin/logging/...
 
-# Run the logger (standalone process) with the shipped example config
-bazel run //basin/logging/continuous_logger:logger_node -- \
-    --ros-args --params-file basin/logging/continuous_logger/config/logger.yaml
+# Run the logger
+bazel run //basin/logging/continuous_logger:logger_node
 
 # Inspect snapshots in a log directory
 bazel run //basin/logging/continuous_logger:snapshot_extractor_cli -- list /tmp/log
@@ -65,8 +64,7 @@ Production Logging Ecosystem:
   
   continuous_logger (Application Layer)
   ├── LoggerNode - Main ROS2 orchestrator
-  ├── snapshot_extractor_cli - CLI extraction tool
-  └── Default configuration (config/logger.yaml)
+  └── snapshot_extractor_cli - CLI extraction tool
   
   log_util (Core Library)
   ├── LogWriter - MCAP file writing

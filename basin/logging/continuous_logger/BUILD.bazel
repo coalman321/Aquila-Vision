@@ -65,14 +65,11 @@ cc_library(
     ],
 )
 
-# Publishes config/ under the `continuous_logger` ament package (what
-# `FindPackageShare('continuous_logger')` resolves). `libraries` publishes the message typesupport
+# Publishes the `continuous_logger` ament package. `libraries` publishes the message typesupport
 # libraries into lib/, which is on LD_LIBRARY_PATH (see .bazelrc), so rclcpp's generic
 # subscriptions can load them. See the matching comment in //basin/launch/core/BUILD.bazel.
 ament_index(
     name = "ament_index",
-    data = glob(["config/**"]),
-    data_strip_prefix = "basin/logging/continuous_logger",
     export_name = "continuous_logger",
     libraries = ["//basin/logging/log_util:logging_msgs"],
 )
