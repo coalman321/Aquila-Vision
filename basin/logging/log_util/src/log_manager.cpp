@@ -4,12 +4,14 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <cctype>
+#include <limits>
 #include <rosbag2_storage/storage_factory.hpp>
 #include <rosbag2_storage/storage_options.hpp>
 
 namespace basin::log_util {
 
-LogManager::LogManager() : rotation_threshold_percent_(80.0), warning_threshold_percent_(70.0) {}
+LogManager::LogManager() : rotation_threshold_percent_(80.0), snapshot_usage_threshold_percent_(50.0) {}
 
 LogManager::~LogManager() {}
 
@@ -24,15 +26,66 @@ void LogManager::set_log_directory(const std::string& directory) {
     snapshot_writer_.set_recording_directory(directory);
 }
 
-void LogManager::set_disk_limits(double rotation_threshold_percent, double warning_threshold_percent) {
+void LogManager::set_disk_limits(double rotation_threshold_percent, double snapshot_usage_threshold_percent) {
     std::lock_guard<std::mutex> lock(mutex_);
     rotation_threshold_percent_ = rotation_threshold_percent;
-    warning_threshold_percent_ = warning_threshold_percent;
+    snapshot_usage_threshold_percent_ = snapshot_usage_threshold_percent;
+}
+
+void LogManager::prepare_log_directory() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!std::filesystem::exists(log_directory_)) {
+        std::filesystem::create_directories(log_directory_);
+    }
+
+    if (!std::filesystem::is_directory(log_directory_)) {
+        throw std::runtime_error("Log path is not a directory: " + log_directory_);
+    }
+}
+
+std::string LogManager::next_log_name(const std::string& prefix) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Take the highest run number seen rather than the newest file's, so a touched or restored older log
+    // can't make a run reuse a number
+    size_t next_run = 0;
+    if (std::filesystem::is_directory(log_directory_)) {
+        for (const auto& entry : std::filesystem::directory_iterator(log_directory_)) {
+            if (!entry.is_regular_file() || entry.path().extension() != ".mcap") {
+                continue;
+            }
+            // Skip empty files (likely from crashed previous runs)
+            std::error_code error;
+            if (std::filesystem::file_size(entry.path(), error) == 0 || error) {
+                continue;
+            }
+
+            // The run number is the digits straight after the prefix; rosbag2 appends `_<split>` after it
+            std::string name = entry.path().filename().string();
+            if (name.compare(0, prefix.size(), prefix) != 0) {
+                continue;
+            }
+            size_t digits_end = prefix.size();
+            while (digits_end < name.size() && std::isdigit(static_cast<unsigned char>(name[digits_end]))) {
+                digits_end++;
+            }
+            if (digits_end > prefix.size()) {
+                size_t run = std::stoull(name.substr(prefix.size(), digits_end - prefix.size()));
+                next_run = std::max(next_run, run + 1);
+            }
+        }
+    }
+
+    return prefix + std::to_string(next_run);
 }
 
 size_t LogManager::scan_log_directory() {
     std::lock_guard<std::mutex> lock(mutex_);
+    return scan_log_directory_locked();
+}
 
+size_t LogManager::scan_log_directory_locked() {
     if (log_directory_.empty() || !std::filesystem::exists(log_directory_)) {
         return 0;
     }
@@ -127,18 +180,40 @@ size_t LogManager::scan_log_directory() {
     return log_files_.size();
 }
 
-bool LogManager::check_and_rotate_logs() {
+DiskCheckResult LogManager::check_disk(const std::string& active_log_file) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    double usage = get_disk_usage_percent();
+    scan_log_directory_locked();
 
-    // Check if we need to delete logs
-    if (usage < rotation_threshold_percent_) {
-        return false;
+    // Delete the oldest unprotected logs until usage is back under the threshold, or nothing deletable is left
+    DiskCheckResult result;
+    while (get_disk_usage_percent() >= rotation_threshold_percent_ &&
+           delete_oldest_unprotected_log(active_log_file)) {
+        result.rotated_files++;
     }
 
-    // Try to delete oldest unprotected log
-    return delete_oldest_unprotected_log();
+    result.disk_usage_percent = get_disk_usage_percent();
+    result.rotation_blocked = result.disk_usage_percent >= rotation_threshold_percent_;
+
+    for (const auto& log_file : log_files_) {
+        if (log_file.associated_with_snapshot) {
+            result.protected_bytes += log_file.size_bytes;
+        }
+    }
+    uintmax_t capacity = get_disk_capacity_bytes();
+    if (capacity > 0) {
+        result.snapshot_usage_percent =
+            (static_cast<double>(result.protected_bytes) / static_cast<double>(capacity)) * 100.0;
+    }
+    result.snapshot_usage_high = result.snapshot_usage_percent >= snapshot_usage_threshold_percent_;
+
+    last_disk_check_ = result;
+    return result;
+}
+
+DiskCheckResult LogManager::get_last_disk_check() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return last_disk_check_;
 }
 
 std::vector<std::string> LogManager::get_log_files() const {
@@ -194,9 +269,14 @@ double LogManager::get_disk_usage_percent() const {
     return (static_cast<double>(used_space) / static_cast<double>(total_space)) * 100.0;
 }
 
-bool LogManager::should_warn_disk_usage() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return get_disk_usage_percent() >= warning_threshold_percent_;
+uintmax_t LogManager::get_disk_capacity_bytes() const {
+    // Note: This should be called with mutex already locked or from const methods
+
+    struct statvfs stat;
+    if (log_directory_.empty() || statvfs(log_directory_.c_str(), &stat) != 0) {
+        return 0;
+    }
+    return static_cast<uintmax_t>(stat.f_blocks) * stat.f_frsize;
 }
 
 const SnapshotWriter& LogManager::get_snapshot_writer() const { return snapshot_writer_; }
@@ -204,15 +284,13 @@ const SnapshotWriter& LogManager::get_snapshot_writer() const { return snapshot_
 bool LogManager::is_log_file_associated_with_snapshot(const LogFileInfo& log_file) const {
     // Note: This should be called with mutex already locked
 
-    // Check if log overlaps with any completed snapshot
+    // Check if log overlaps with any snapshot. One still running (end_time == -1) protects everything from its
+    // start on, so an event snapshot's time_before window survives until the snapshot is finalized
     for (const auto& snapshot : snapshot_writer_.get_all_snapshots()) {
-        // Skip running snapshots (end_time == -1)
-        if (snapshot.end_time == -1) {
-            continue;
-        }
+        int64_t snapshot_end = snapshot.end_time == -1 ? std::numeric_limits<int64_t>::max() : snapshot.end_time;
 
         // Check for time range overlap
-        if (!(log_file.end_time < snapshot.start_time || log_file.start_time > snapshot.end_time)) {
+        if (!(log_file.end_time < snapshot.start_time || log_file.start_time > snapshot_end)) {
             return true;
         }
     }
@@ -244,12 +322,12 @@ bool LogManager::get_log_time_range(const std::string& log_path, int64_t& start_
 
         auto metadata = storage->get_metadata();
 
-        // Convert ROS time (nanoseconds) to epoch seconds
-        start_time = metadata.starting_time.time_since_epoch().count() / 1000000000LL;
-
-        // Calculate end time from start time and duration
-        int64_t duration_ns = metadata.duration.count();
-        end_time = start_time + (duration_ns / 1000000000LL);
+        // Convert ROS time (nanoseconds) to epoch seconds, widening to whole seconds so a file that covers part
+        // of a snapshot's first or last second still counts as overlapping it
+        int64_t start_ns = metadata.starting_time.time_since_epoch().count();
+        int64_t end_ns = start_ns + metadata.duration.count();
+        start_time = start_ns / 1000000000LL;
+        end_time = (end_ns + 999999999LL) / 1000000000LL;
 
         return true;
     } catch (const std::exception& e) {
@@ -257,11 +335,16 @@ bool LogManager::get_log_time_range(const std::string& log_path, int64_t& start_
     }
 }
 
-bool LogManager::delete_oldest_unprotected_log() {
+bool LogManager::delete_oldest_unprotected_log(const std::string& active_log_file) {
     // Note: This should be called with mutex already locked
 
-    // Find oldest log file not associated with snapshot
+    std::filesystem::path active_path = std::filesystem::path(active_log_file).lexically_normal();
+
+    // Find oldest log file not associated with snapshot, never the one being written
     for (auto it = log_files_.begin(); it != log_files_.end(); ++it) {
+        if (!active_log_file.empty() && std::filesystem::path(it->path).lexically_normal() == active_path) {
+            continue;
+        }
         if (!it->associated_with_snapshot) {
             try {
                 std::filesystem::remove(it->path);

@@ -1,12 +1,10 @@
-"""Runs the continuous logger the way it is deployed: as a component hosted by basin_container.
+"""Runs the continuous logger the way it is deployed: the logger_node binary as its own process.
 
-Starts the container with a config that loads basin::continuous_logger::LoggerNode from the
-`continuous_logger` ament package, points the node at a scratch log directory, and checks that the
-node is found through the ament index, loads, discovers and subscribes to its configured topic,
-writes MCAP files (which needs the rosbag2 storage plugins the container carries), and that SIGINT
-shuts the container down cleanly. It then runs snapshot_extractor_cli against the directory the
-logger produced. A plain cc_test linking :logger would exercise none of the plugin packaging
-(ament index, dlopen, typesupport libraries in lib/).
+Points the node at a scratch log directory and checks that it comes up, discovers and subscribes to
+its configured topic (which needs the typesupport libraries), writes MCAP files (which needs the
+rosbag2 storage plugins), and that SIGINT shuts it down cleanly. It then runs snapshot_extractor_cli
+against the directory the logger produced. A plain cc_test linking :logger would exercise none of
+the binary's runtime packaging.
 """
 import glob
 import os
@@ -24,17 +22,13 @@ from python.runfiles import runfiles
 STARTUP_TIMEOUT_S = 30
 SHUTDOWN_TIMEOUT_S = 15
 
-# What basin_container logs when a component can't be loaded. It keeps running afterwards, so
-# without this a broken plugin would only fail the test once the startup timeout expired.
-LOAD_FAILURE = re.compile(r"Failed to load library|Failed to find class|Component constructor threw")
 
-
-class LoggerComponentTest(unittest.TestCase):
+class LoggerNodeTest(unittest.TestCase):
     def setUp(self):
         self._runfiles = r = runfiles.Create()
         workspace = os.environ.get("TEST_WORKSPACE", "_main")
-        container = r.Rlocation(f"{workspace}/basin/core/node_core/basin_container")
-        self.assertTrue(container and os.path.exists(container), "container not in runfiles")
+        logger = r.Rlocation(f"{workspace}/basin/logging/continuous_logger/logger_node")
+        self.assertTrue(logger and os.path.exists(logger), "logger_node not in runfiles")
         self._cli = r.Rlocation(f"{workspace}/basin/logging/continuous_logger/snapshot_extractor_cli")
         self.assertTrue(self._cli and os.path.exists(self._cli), "extractor cli not in runfiles")
 
@@ -56,19 +50,6 @@ class LoggerComponentTest(unittest.TestCase):
                 "        throttle: 0\n"
             )
 
-        # A component only gets the arguments listed for it, so its parameters file goes in `args`.
-        params = os.path.join(self._tmp.name, "container.yaml")
-        with open(params, "w") as f:
-            f.write(
-                "/**/basin_container:\n"
-                "  ros__parameters:\n"
-                "    components:\n"
-                "      0:\n"
-                "        library_name: basin::continuous_logger::LoggerNode\n"
-                "        package_name: continuous_logger\n"
-                f'        args: ["--ros-args", "--params-file", "{logger_params}"]\n'
-            )
-
         # Concurrent test processes on one DDS domain deadlock each other's node construction.
         domain = ros_test_domain.claim()
         self.addCleanup(domain.close)  # LIFO: runs after _kill_tree, once nothing uses the domain
@@ -76,7 +57,7 @@ class LoggerComponentTest(unittest.TestCase):
         self._output = []
         self._output_changed = threading.Condition()
         self._proc = subprocess.Popen(
-            [container, "--ros-args", "--params-file", params],
+            [logger, "--ros-args", "--params-file", logger_params],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -110,8 +91,6 @@ class LoggerComponentTest(unittest.TestCase):
                     match = re.search(pattern, line)
                     if match:
                         return match
-                    if LOAD_FAILURE.search(line):
-                        self.fail("component failed to load:\n" + "\n".join(self._output))
                 seen = len(self._output)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0 or self._proc.poll() is not None and seen == len(self._output):
@@ -119,17 +98,16 @@ class LoggerComponentTest(unittest.TestCase):
                 self._output_changed.wait(min(remaining, 0.5))
         self.fail(f"never saw /{pattern}/ in output:\n" + "\n".join(self._output))
 
-    def _stop_container(self):
+    def _stop_logger(self):
         os.killpg(self._proc.pid, signal.SIGINT)
         try:
             returncode = self._proc.wait(timeout=SHUTDOWN_TIMEOUT_S)
         except subprocess.TimeoutExpired:
-            self.fail("container did not exit after SIGINT:\n" + "\n".join(self._output))
-        self.assertEqual(returncode, 0, "container exited uncleanly:\n" + "\n".join(self._output))
+            self.fail("logger did not exit after SIGINT:\n" + "\n".join(self._output))
+        self.assertEqual(returncode, 0, "logger exited uncleanly:\n" + "\n".join(self._output))
 
-    def test_component_loads_logs_and_stops(self):
-        # The container found the component through the ament index and the node came up...
-        self._wait_for_output(r"Instantiate class: .*basin::continuous_logger::LoggerNode", STARTUP_TIMEOUT_S)
+    def test_node_starts_logs_and_stops(self):
+        # The node came up...
         self._wait_for_output(r"\[logger\]: Started logger", STARTUP_TIMEOUT_S)
         # ...discovered its topic from the params file (its GenericSubscription needs the
         # typesupport libraries)...
@@ -139,9 +117,7 @@ class LoggerComponentTest(unittest.TestCase):
         while len(glob.glob(os.path.join(self.log_dir, "*.mcap"))) < 2:
             self.assertLess(time.monotonic(), deadline, "logger never split its log:\n" + "\n".join(self._output))
             time.sleep(0.25)
-        self.assertNotIn("Failed to load", "\n".join(self._output))
-
-        self._stop_container()
+        self._stop_logger()
         self._wait_for_output(r"Logger node shutdown complete", 1)
 
         # The directory the logger left behind is one the extractor accepts.

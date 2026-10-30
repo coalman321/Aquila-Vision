@@ -2,6 +2,10 @@
 
 ## 0.4.1
 
+- Continuous Logger: shows how much of the disk snapshot-protected logs fill against the logger's
+  snapshot usage threshold, and colours the disk bar by it. Reads the `LoggerStatus` fields
+  `snapshot_usage_percent`, `snapshot_usage_threshold_percent` and `snapshot_protected_bytes`,
+  which replace `disk_warning_threshold_percent`; with an older logger snapshot usage reads as unset.
 - Continuous Logger: reads the rotation threshold from the renamed `LoggerStatus` field
   `disk_rotation_threshold_percent` (was `disk_max_usage_percent`). Needs a logger built after the
   rename; with an older one the threshold reads as unset.

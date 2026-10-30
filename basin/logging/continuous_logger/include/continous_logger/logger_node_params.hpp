@@ -35,11 +35,11 @@ struct LoggerParams : public basin::node_core::NodeParams {
     ///< Max log size in bytes
     long log_split_size{ std::numeric_limits<long>::max() };
 
-    ///< Maximum disk usage percentage before rotating logs (0-100)
+    ///< Disk usage percentage (0-100) at which the oldest unprotected logs are deleted, until usage is back under it
     double rotation_threshold_percent{ 70.0 };
 
-    ///< Disk usage warning threshold percentage (0-100)
-    double disk_warning_threshold_percent{ 80.0 };
+    ///< Percentage of the disk (0-100) snapshot-protected logs may fill before the disk-full fault is raised
+    double snapshot_usage_threshold_percent{ 50.0 };
 
     ///< Interval for checking disk usage (seconds)
     double disk_check_interval{ 60.0 };
@@ -67,7 +67,7 @@ struct LoggerParams : public basin::node_core::NodeParams {
 
         // Disk management configurations
         createParam("rotation_threshold_percent", rotation_threshold_percent);
-        createParam("disk_warning_threshold_percent", disk_warning_threshold_percent);
+        createParam("snapshot_usage_threshold_percent", snapshot_usage_threshold_percent);
         createParam("disk_check_interval", disk_check_interval);
 
         // Event snapshot configurations

@@ -9,7 +9,6 @@
 #include <iomanip>
 #include <iostream>
 #include <regex>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
@@ -44,34 +43,31 @@ static std::regex compileTopicPattern(const std::string& pattern) {
     return std::regex(expr);
 }
 
-struct LogInfo {
-    ///< Name of the directory
-    std::string name;
-
-    ///< Last updated time for the folder
-    std::filesystem::file_time_type updated;
-
-    bool operator<(const LogInfo& other) const { return updated < other.updated; }
-};
-
 LoggerNode::LoggerNode(const rclcpp::NodeOptions& options) : basin::node_core::NodeCore("logger", "", options) {
     params_ = std::make_unique<LoggerParams>(this);
 
     // Create the component instances
     log_writer_ = std::make_unique<log_util::LogWriter>();
-    snapshot_writer_ = std::make_unique<log_util::SnapshotWriter>();
+    snapshot_tracker_ = std::make_unique<log_util::SnapshotTracker>();
     log_manager_ = std::make_unique<log_util::LogManager>();
 
     // Configure log manager
     log_manager_->set_log_directory(params_->log_path.string());
-    log_manager_->set_disk_limits(params_->rotation_threshold_percent, params_->disk_warning_threshold_percent);
+    log_manager_->set_disk_limits(params_->rotation_threshold_percent, params_->snapshot_usage_threshold_percent);
 
     // Resolve manifest directory (default: {log_path}/pending)
     manifest_dir_ = params_->manifest_dir.empty() ? params_->log_path / "pending" : params_->manifest_dir;
     log_manager_->set_manifest_dir(manifest_dir_.string());
 
-    // Scan existing logs
+    // Create the log directory, then scan the logs already in it
+    try {
+        log_manager_->prepare_log_directory();
+    } catch (const std::exception& e) {
+        RCLCPP_FATAL_STREAM(get_logger(), "Configured log path is not a valid directory! " << params_->log_path);
+        throw;
+    }
     log_manager_->scan_log_directory();
+    snapshot_tracker_->set_recording_directory(params_->log_path.string());
 
     // Create the topic subscriptions and handlers
     for (TopicConfig& config : params_->topic_configs) {
@@ -123,9 +119,15 @@ LoggerNode::LoggerNode(const rclcpp::NodeOptions& options) : basin::node_core::N
         throw;
     }
 
-    // Initialize event snapshot counters from existing snapshots
-    recoverFromWAL();
-    initializeEventSnapshotCounters();
+    // Close the snapshots a previous run left open, and pick up its event counters. Recovery runs on wall-clock
+    // time, as the snapshots it ends were stamped with it
+    for (const std::string& snapshot_id : snapshot_tracker_->recover(rclcpp::Clock(RCL_SYSTEM_TIME).now())) {
+        RCLCPP_INFO_STREAM(get_logger(), "WAL recovery: closed snapshot '" << snapshot_id << "'");
+        emitSnapshotManifest(snapshot_id);
+    }
+    for (const auto& [event_name, counter] : snapshot_tracker_->event_counters()) {
+        RCLCPP_INFO_STREAM(get_logger(), "Event '" << event_name << "': next snapshot ID will be " << counter);
+    }
 
     // Log configured event snapshots
     if (!params_->event_snapshot_configs.empty()) {
@@ -154,36 +156,22 @@ void LoggerNode::shutdown() {
     if (disk_check_timer_) {
         disk_check_timer_->cancel();
     }
-    if (event_snapshot_timer_) {
-        event_snapshot_timer_->cancel();
-    }
     if (split_timer_) {
         split_timer_->cancel();
     }
 
-    // Finalize any pending event snapshots
-    {
-        std::lock_guard<std::mutex> lock(event_snapshot_mutex_);
-
-        auto now_sec =
-            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-                .count();
-
-        for (const auto& pending : pending_event_snapshots_) {
+    // Finalize any pending event snapshots, cut short at shutdown, and hand them to the uploader while the log
+    // writer can still close out the split they end in
+    if (snapshot_tracker_) {
+        for (const std::string& snapshot_id :
+             snapshot_tracker_->finalize_pending(rclcpp::Clock(RCL_SYSTEM_TIME).now())) {
             RCLCPP_INFO_STREAM(get_logger(),
-                               "Finalizing pending event snapshot '" << pending.snapshot_id << "' during shutdown");
-            snapshot_writer_->stop_snapshot(pending.snapshot_id, now_sec);
+                               "Finalized pending event snapshot '" << snapshot_id << "' during shutdown");
+            emitSnapshotManifest(snapshot_id);
         }
-        pending_event_snapshots_.clear();
 
-        // Clear WAL now that all pending state is resolved
-        saveWalLocked();
-    }
-
-    // Save snapshot metadata to disk
-    if (snapshot_writer_) {
         RCLCPP_INFO(get_logger(), "Saving snapshot metadata...");
-        snapshot_writer_->save_to_file();
+        snapshot_tracker_->save();
     }
 
     // Close the log writer
@@ -229,12 +217,13 @@ void LoggerNode::discoverTopics() {
         logged_topic.topic_type = topic_types.at(0);
         logged_topic.callback = std::bind(&LoggerNode::genericCallback, this, _1, std::ref(logged_topic));
         try {
-            logged_topic.subscription = create_generic_subscription(
-                logged_topic.topic_name, logged_topic.topic_type, rclcpp::SystemDefaultsQoS(), logged_topic.callback);
+            logged_topic.subscription = create_generic_subscription(logged_topic.topic_name, logged_topic.topic_type,
+                                                                    rclcpp::SystemDefaultsQoS(), logged_topic.callback);
         } catch (const std::exception& e) {
             RCLCPP_ERROR_STREAM_THROTTLE(get_logger(), *get_clock(), 60000,
                                          "Failed to subscribe to topic " << logged_topic.topic_name << " ("
-                                                                         << logged_topic.topic_type << "): " << e.what());
+                                                                         << logged_topic.topic_type
+                                                                         << "): " << e.what());
             continue;
         }
 
@@ -290,100 +279,28 @@ void LoggerNode::metadataCallback(logging_msgs::msg::LogMetadata::ConstSharedPtr
 }
 
 void LoggerNode::openNextLogfile() {
-    // Create the log directory if it doesnt exist
-    if (!std::filesystem::exists(params_->log_path)) {
-        std::filesystem::create_directories(params_->log_path);
-    }
+    std::string log_name = log_manager_->next_log_name(params_->log_prefix);
 
-    // If it does exist but is not a directory this is an error that must be handled.
-    if (!std::filesystem::is_directory(params_->log_path)) {
-        RCLCPP_FATAL_STREAM(get_logger(), "Configured log path is not a valid directory! " << params_->log_path);
-        throw std::runtime_error("Log path is not a directory!");
-    }
+    RCLCPP_INFO_STREAM(get_logger(), "Opening new log " << log_name << " in " << params_->log_path);
 
-    RCLCPP_INFO_STREAM(get_logger(), "Logging to folder: " << params_->log_path);
-
-    // Scan the log directory for existing MCAP files to determine next sequence number
-    std::vector<LogInfo> prior_logs;
-    for (const std::filesystem::path& possible_log_file : std::filesystem::directory_iterator(params_->log_path)) {
-        if (std::filesystem::is_regular_file(possible_log_file) && possible_log_file.extension() == ".mcap") {
-            // Skip empty/corrupted files (likely from crashed previous runs)
-            auto file_size = std::filesystem::file_size(possible_log_file);
-            if (file_size == 0) {
-                RCLCPP_WARN_STREAM(get_logger(), "Skipping empty/corrupted log file: " << possible_log_file.filename());
-                continue;
-            }
-
-            LogInfo discovered_log{ possible_log_file.filename(), std::filesystem::last_write_time(possible_log_file) };
-
-            RCLCPP_DEBUG_STREAM(get_logger(), "Discovered log: " << discovered_log.name);
-
-            prior_logs.push_back(discovered_log);
-        }
-    }
-
-    // discover the previous sequence #
-    std::sort(prior_logs.begin(), prior_logs.end());
-
-    size_t next_log_number = 0;
-    if (!prior_logs.empty()) {
-        std::string last_log_name = prior_logs.at(prior_logs.size() - 1).name;
-        RCLCPP_INFO_STREAM(get_logger(), "Last logfile detected " << last_log_name);
-
-        std::regex log_num_regex{ "\\d+" };
-        std::smatch log_num_match;
-        if (std::regex_search(last_log_name, log_num_match, log_num_regex)) {
-            // always take the first
-            next_log_number = std::stoull(log_num_match[0].str()) + 1;
-        } else {
-            RCLCPP_WARN_STREAM(get_logger(), "Unable to detect prior log number from log name " << last_log_name);
-        }
-    }
-
-    // build the new log file name (will create log_prefix_N.mcap files)
-    std::string log_name = params_->log_prefix + std::to_string(next_log_number);
-
-    RCLCPP_INFO_STREAM(get_logger(), "Opening new log " << log_name);
-
-    // Configure snapshot writer with the log directory
-    snapshot_writer_->set_recording_directory(params_->log_path.string());
-    snapshot_writer_->load_from_file();
-
-    // Ensure snapshots.yaml file exists even if empty
-    // This makes it easier for tools to validate the log directory
-    snapshot_writer_->ensure_file_exists();
-
-    // open the next log in the sequence
-    // Use the log_path directly as the URI for flat directory structure
-    rosbag2_storage::StorageOptions options;
-    options.uri = params_->log_path.string();
-    options.max_bagfile_duration = params_->log_split_time;
-    options.max_bagfile_size = params_->log_split_size;
-    options.storage_id = "mcap";      // Use MCAP format as specified in the design
-    options.storage_config_uri = "";  // No additional config needed
-
-    // Set converter options for serialization
-    rosbag2_cpp::ConverterOptions converter_options;
-    converter_options.input_serialization_format = "cdr";   // Input is always CDR from ROS2
-    converter_options.output_serialization_format = "cdr";  // Output is also CDR for MCAP
-
-    log_writer_->open(options, converter_options, log_name);
+    log_writer_->open(log_util::make_mcap_storage_options(params_->log_path.string(), params_->log_split_time,
+                                                          params_->log_split_size),
+                      rosbag2_cpp::ConverterOptions{ "cdr", "cdr" }, log_name);
 }
 
 void LoggerNode::handleSnapshotRequest(logging_msgs::srv::SnapshotRequest::Request::SharedPtr req,
                                        logging_msgs::srv::SnapshotRequest::Response::SharedPtr resp) {
     // Figure out if this is a start or stop request
     if (req->request_id == req->REQUEST_START) {
-        if (snapshot_writer_->has_snapshot(req->snapshot_name)) {
+        if (snapshot_tracker_->has_snapshot(req->snapshot_name)) {
             // snapshot exists, tell the caller
             resp->resp_code = resp->RESPONSE_SNAPSHOT_EXISTS;
             resp->response_msg = "Snapshot " + req->snapshot_name + " already exists";
         } else {
             RCLCPP_INFO_STREAM(get_logger(), "Started snapshot " + req->snapshot_name);
 
-            bool success = snapshot_writer_->start_snapshot(req->snapshot_name, "manual", req->description, req->tags);
+            bool success = snapshot_tracker_->start_manual(req->snapshot_name, req->description, req->tags);
             if (success) {
-                saveWal();
                 resp->resp_code = resp->RESPONSE_OK;
                 resp->response_msg = "Snapshot " + req->snapshot_name + " started";
             } else {
@@ -392,15 +309,14 @@ void LoggerNode::handleSnapshotRequest(logging_msgs::srv::SnapshotRequest::Reque
             }
         }
     } else if (req->request_id == req->REQUEST_STOP) {
-        if (!snapshot_writer_->is_snapshot_running(req->snapshot_name)) {
+        if (!snapshot_tracker_->is_running(req->snapshot_name)) {
             resp->resp_code = resp->RESPONSE_INVALID_NAME;
             resp->response_msg = "Snapshot " + req->snapshot_name + " does not exist or is not running";
         } else {
             RCLCPP_INFO_STREAM(get_logger(), "Finished snapshot " + req->snapshot_name);
 
-            bool success = snapshot_writer_->stop_snapshot(req->snapshot_name);
+            bool success = snapshot_tracker_->stop_manual(req->snapshot_name);
             if (success) {
-                saveWal();
                 emitSnapshotManifest(req->snapshot_name);
                 resp->resp_code = resp->RESPONSE_OK;
                 resp->response_msg = "Snapshot " + req->snapshot_name + " completed";
@@ -419,26 +335,26 @@ void LoggerNode::handleSnapshotRequest(logging_msgs::srv::SnapshotRequest::Reque
 }
 
 void LoggerNode::checkDiskUsage() {
-    // Rescan log directory to get updated info
-    log_manager_->scan_log_directory();
+    log_util::DiskCheckResult disk = log_manager_->check_disk(log_writer_->get_current_file_path());
 
-    // Check if we should warn about disk usage
-    if (log_manager_->should_warn_disk_usage()) {
-        RCLCPP_WARN_STREAM(get_logger(), "Disk usage is high: " << log_manager_->get_disk_usage_percent() << "%");
+    if (disk.rotated_files > 0) {
+        RCLCPP_INFO_STREAM(get_logger(), "Rotated " << disk.rotated_files << " old log files to free disk space");
     }
 
-    // Try to rotate logs if needed
-    if (log_manager_->check_and_rotate_logs()) {
-        RCLCPP_INFO(get_logger(), "Rotated old log files to free disk space");
+    if (disk.rotation_blocked) {
+        RCLCPP_WARN_STREAM_THROTTLE(get_logger(), *get_clock(), 60000,
+                                    "Disk usage is " << disk.disk_usage_percent << "%, at or above the "
+                                                     << params_->rotation_threshold_percent
+                                                     << "% rotation threshold, but every remaining log is protected "
+                                                        "by a snapshot");
     }
 
-    // Judge the disk after rotating: if that freed enough, there is nothing left to report
-    if (log_manager_->should_warn_disk_usage()) {
+    if (disk.snapshot_usage_high) {
         std::ostringstream desc;
-        desc << std::fixed << std::setprecision(1) << "Disk usage is " << log_manager_->get_disk_usage_percent()
-             << "%, at or above the " << params_->disk_warning_threshold_percent << "% warning threshold. Old logs are "
-             << "rotated away once it reaches " << params_->rotation_threshold_percent
-             << "%, except those snapshots protect";
+        desc << std::fixed << std::setprecision(1) << "Disk almost full: snapshot-protected logs use "
+             << disk.snapshot_usage_percent << "% of the disk, at or above the "
+             << params_->snapshot_usage_threshold_percent << "% snapshot threshold (total usage "
+             << disk.disk_usage_percent << "%). Upload or delete snapshots to free space";
         sendFaultReport(DISK_FAULT_SYSTEM, DISK_FAULT_NAME,
                         std::chrono::duration<double>(DISK_FAULT_TOV_INTERVALS * params_->disk_check_interval),
                         desc.str());
@@ -446,67 +362,35 @@ void LoggerNode::checkDiskUsage() {
 }
 
 void LoggerNode::handleEventSnapshot(const std::string& event_name, const rclcpp::Time& event_time) {
-    // Check if this event should trigger a snapshot
+    // Check if this event should trigger a snapshot. Only one snapshot is made per event occurrence
     for (const auto& config : params_->event_snapshot_configs) {
-        if (config.event_name == event_name) {
-            RCLCPP_INFO_STREAM(get_logger(), "Event '" << event_name << "' triggered automatic snapshot creation");
-
-            // Generate unique snapshot ID using per-event counter
-            std::lock_guard<std::mutex> lock(event_snapshot_mutex_);
-
-            // Get or initialize counter for this event name
-            uint64_t snap_id = event_snapshot_counters_[event_name]++;
-            std::string snapshot_id = "event_" + event_name + "_" + std::to_string(snap_id);
-
-            // Calculate start time (event_time - time_before)
-            int64_t start_time_sec = event_time.seconds() - static_cast<int64_t>(config.time_before);
-
-            // Calculate finalize time (event_time + time_after)
-            rclcpp::Time finalize_time = event_time + rclcpp::Duration::from_seconds(config.time_after);
-
-            // Replace {event_name} in description template
-            std::string description = config.description;
-            size_t pos = description.find("{event_name}");
-            if (pos != std::string::npos) {
-                description.replace(pos, 12, event_name);
-            }
-
-            // Create trigger string
-            std::string trigger = "event-" + event_name;
-
-            // Start the snapshot with the calculated start time
-            bool success =
-                snapshot_writer_->start_snapshot(snapshot_id, trigger, description, config.tags, start_time_sec);
-
-            if (success) {
-                // Add to pending snapshots for finalization
-                PendingEventSnapshot pending;
-                pending.snapshot_id = snapshot_id;
-                pending.event_name = event_name;
-                pending.trigger_time = event_time;
-                pending.finalize_time = finalize_time;
-                pending.tags = config.tags;
-                pending.description = description;
-
-                pending_event_snapshots_.push_back(pending);
-
-                saveWalLocked();
-
-                RCLCPP_INFO_STREAM(get_logger(), "Started event snapshot '" << snapshot_id << "' (will finalize at "
-                                                                            << finalize_time.seconds() << "s)");
-            } else {
-                RCLCPP_WARN_STREAM(get_logger(), "Failed to start event snapshot for '" << event_name << "'");
-            }
-
-            // Only create one snapshot per event occurrence
-            break;
+        if (config.event_name != event_name) {
+            continue;
         }
+
+        RCLCPP_INFO_STREAM(get_logger(), "Event '" << event_name << "' triggered automatic snapshot creation");
+
+        // Replace {event_name} in description template
+        std::string description = config.description;
+        size_t pos = description.find("{event_name}");
+        if (pos != std::string::npos) {
+            description.replace(pos, 12, event_name);
+        }
+
+        std::string snapshot_id = snapshot_tracker_->start_event(event_name, event_time, config.time_before,
+                                                                 config.time_after, description, config.tags);
+        if (snapshot_id.empty()) {
+            RCLCPP_WARN_STREAM(get_logger(), "Failed to start event snapshot for '" << event_name << "'");
+        } else {
+            RCLCPP_INFO_STREAM(get_logger(), "Started event snapshot '" << snapshot_id << "' (will finalize at "
+                                                                        << event_time.seconds() + config.time_after
+                                                                        << "s)");
+        }
+        break;
     }
 }
 
 void LoggerNode::onTick() {
-    std::lock_guard<std::mutex> lock(event_snapshot_mutex_);
-
     rclcpp::Time now;
     try {
         now = this->now();
@@ -514,43 +398,29 @@ void LoggerNode::onTick() {
         return;
     }
 
-    // Check for snapshots that need to be finalized
-    auto it = pending_event_snapshots_.begin();
-    while (it != pending_event_snapshots_.end()) {
-        if (now >= it->finalize_time) {
-            // Time to finalize this snapshot
-            int64_t end_time_sec = it->finalize_time.seconds();
-
-            bool success = snapshot_writer_->stop_snapshot(it->snapshot_id, end_time_sec);
-
-            if (success) {
-                RCLCPP_INFO_STREAM(get_logger(), "Finalized event snapshot '" << it->snapshot_id << "'");
-                std::string snap_id = it->snapshot_id;
-                it = pending_event_snapshots_.erase(it);
-                saveWalLocked();
-                emitSnapshotManifest(snap_id);
-            } else {
-                RCLCPP_WARN_STREAM(get_logger(), "Failed to finalize event snapshot '" << it->snapshot_id << "'");
-                it = pending_event_snapshots_.erase(it);
-            }
-        } else {
-            ++it;
-        }
+    // Finalize the event snapshots whose time_after window has ended
+    for (const std::string& snapshot_id : snapshot_tracker_->finalize_due(now)) {
+        RCLCPP_INFO_STREAM(get_logger(), "Finalized event snapshot '" << snapshot_id << "'");
+        emitSnapshotManifest(snapshot_id);
     }
 
-    status_pub_->publish(buildStatusLocked(now));
+    status_pub_->publish(buildStatus(now));
 }
 
-logging_msgs::msg::LoggerStatus LoggerNode::buildStatusLocked(const rclcpp::Time& now) const {
+logging_msgs::msg::LoggerStatus LoggerNode::buildStatus(const rclcpp::Time& now) const {
     logging_msgs::msg::LoggerStatus status;
     status.stamp = now;
 
     // The percentage is the one the rotation decision uses; the byte counts are the same statvfs numbers
-    // (free is f_bfree, not f_bavail).
+    // (free is f_bfree, not f_bavail). Snapshot usage is as of the last disk check, as measuring it rescans the
+    // log directory.
+    log_util::DiskCheckResult disk = log_manager_->get_last_disk_check();
     status.log_path = params_->log_path.string();
     status.disk_usage_percent = log_manager_->get_disk_usage_percent();
     status.disk_rotation_threshold_percent = params_->rotation_threshold_percent;
-    status.disk_warning_threshold_percent = params_->disk_warning_threshold_percent;
+    status.snapshot_usage_threshold_percent = params_->snapshot_usage_threshold_percent;
+    status.snapshot_usage_percent = disk.snapshot_usage_percent;
+    status.snapshot_protected_bytes = disk.protected_bytes;
     std::error_code error;
     std::filesystem::space_info space = std::filesystem::space(params_->log_path, error);
     if (!error) {
@@ -558,112 +428,13 @@ logging_msgs::msg::LoggerStatus LoggerNode::buildStatusLocked(const rclcpp::Time
         status.disk_free_bytes = space.free;
     }
 
-    status.events = makeEventStatuses(params_->event_snapshot_configs, event_snapshot_counters_);
+    status.events = makeEventStatuses(params_->event_snapshot_configs, snapshot_tracker_->event_counters());
 
-    std::set<std::string> pending_ids;
-    for (const PendingEventSnapshot& pending : pending_event_snapshots_) {
-        pending_ids.insert(pending.snapshot_id);
-    }
-    std::vector<log_util::SnapshotInfo> snapshots = snapshot_writer_->get_all_snapshots();
+    std::vector<log_util::SnapshotInfo> snapshots = snapshot_tracker_->get_all_snapshots();
     status.total_snapshot_count = static_cast<uint32_t>(snapshots.size());
-    status.snapshots = makeSnapshotStatuses(std::move(snapshots), pending_ids);
+    status.snapshots = makeSnapshotStatuses(std::move(snapshots), snapshot_tracker_->pending_event_ids());
 
     return status;
-}
-
-void LoggerNode::initializeEventSnapshotCounters() {
-    std::lock_guard<std::mutex> lock(event_snapshot_mutex_);
-
-    // Get all existing snapshots from the snapshot writer
-    auto snapshots = snapshot_writer_->get_all_snapshots();
-
-    // Parse snapshot IDs to find event-triggered snapshots and update counters
-    for (const auto& snapshot : snapshots) {
-        // Check if this is an event-triggered snapshot (format: event_<name>_<number>)
-        if (snapshot.id.rfind("event_", 0) == 0) {  // Starts with "event_"
-            // Extract the event name and counter
-            std::string id_suffix = snapshot.id.substr(6);  // Remove "event_" prefix
-
-            // Find the last underscore (separates name from counter)
-            size_t last_underscore = id_suffix.rfind('_');
-            if (last_underscore != std::string::npos) {
-                std::string event_name = id_suffix.substr(0, last_underscore);
-                std::string counter_str = id_suffix.substr(last_underscore + 1);
-
-                try {
-                    uint64_t counter = std::stoull(counter_str);
-
-                    // Update the counter for this event name to be one more than the highest seen
-                    if (event_snapshot_counters_[event_name] <= counter) {
-                        event_snapshot_counters_[event_name] = counter + 1;
-                    }
-                } catch (const std::exception& e) {
-                    // Invalid counter format, skip this snapshot
-                    RCLCPP_WARN_STREAM(get_logger(), "Failed to parse counter from snapshot ID: " << snapshot.id);
-                }
-            }
-        }
-    }
-
-    // Log the initialized counters
-    if (!event_snapshot_counters_.empty()) {
-        RCLCPP_INFO(get_logger(), "Initialized event snapshot counters from existing snapshots:");
-        for (const auto& [event_name, counter] : event_snapshot_counters_) {
-            RCLCPP_INFO_STREAM(get_logger(), "  - " << event_name << ": next ID will be " << counter);
-        }
-    }
-}
-
-void LoggerNode::recoverFromWAL() {
-    log_util::WalState wal_state;
-    if (!snapshot_writer_->load_wal(wal_state)) {
-        return;  // No WAL — nothing to recover
-    }
-
-    std::lock_guard<std::mutex> lock(event_snapshot_mutex_);
-
-    int64_t now_sec =
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-
-    // Recover open manual snapshots: stop them and emit manifests
-    for (const auto& open_snap : wal_state.open_snapshots) {
-        if (!snapshot_writer_->is_snapshot_running(open_snap.id)) {
-            continue;  // Already closed (shouldn't happen, but be safe)
-        }
-        RCLCPP_INFO_STREAM(get_logger(), "WAL recovery: closing open snapshot '" << open_snap.id << "'");
-        bool success = snapshot_writer_->stop_snapshot(open_snap.id, now_sec);
-        if (success) {
-            emitSnapshotManifest(open_snap.id);
-        }
-    }
-    wal_state.open_snapshots.clear();
-
-    // Recover pending event snapshots
-    std::vector<log_util::WalPendingEventSnapshot> still_pending;
-    for (const auto& wal_pending : wal_state.pending_event_snapshots) {
-        if (wal_pending.finalize_time_sec <= now_sec) {
-            // Finalize time has already passed
-            RCLCPP_INFO_STREAM(get_logger(),
-                               "WAL recovery: finalizing overdue event snapshot '" << wal_pending.snapshot_id << "'");
-            bool success = snapshot_writer_->stop_snapshot(wal_pending.snapshot_id, wal_pending.finalize_time_sec);
-            if (success) {
-                emitSnapshotManifest(wal_pending.snapshot_id);
-            }
-        } else {
-            // Finalize time is still in the future — re-add to in-memory list
-            PendingEventSnapshot mem_pending;
-            mem_pending.snapshot_id = wal_pending.snapshot_id;
-            mem_pending.event_name = wal_pending.event_name;
-            mem_pending.finalize_time = rclcpp::Time(
-                wal_pending.finalize_time_sec, static_cast<uint32_t>(wal_pending.finalize_time_nsec), RCL_SYSTEM_TIME);
-            pending_event_snapshots_.push_back(mem_pending);
-            still_pending.push_back(wal_pending);
-        }
-    }
-    wal_state.pending_event_snapshots = still_pending;
-
-    // Persist the updated (partially-resolved) WAL
-    snapshot_writer_->save_wal(wal_state);
 }
 
 void LoggerNode::emitSnapshotManifest(const std::string& snapshot_id) {
@@ -674,7 +445,7 @@ void LoggerNode::emitSnapshotManifest(const std::string& snapshot_id) {
         log_writer_->force_split();
     }
 
-    log_util::SnapshotInfo snapshot = snapshot_writer_->get_snapshot(snapshot_id);
+    log_util::SnapshotInfo snapshot = snapshot_tracker_->get_snapshot(snapshot_id);
     if (snapshot.id.empty()) {
         RCLCPP_WARN_STREAM(get_logger(), "Cannot emit manifest for unknown snapshot: " << snapshot_id);
         return;
@@ -739,42 +510,4 @@ void LoggerNode::emitSnapshotManifest(const std::string& snapshot_id) {
     }
 }
 
-void LoggerNode::saveWalLocked() {
-    // Must be called with event_snapshot_mutex_ held
-    log_util::WalState wal;
-
-    // Collect running manual snapshots (trigger == "manual", not yet stopped)
-    for (const auto& snapshot : snapshot_writer_->get_all_snapshots()) {
-        if (snapshot.end_time == -1 && snapshot.trigger == "manual") {
-            log_util::WalOpenSnapshot ws;
-            ws.id = snapshot.id;
-            ws.start_time = snapshot.start_time;
-            ws.trigger = snapshot.trigger;
-            ws.description = snapshot.description;
-            ws.tags = snapshot.tags;
-            wal.open_snapshots.push_back(ws);
-        }
-    }
-
-    // Collect pending event snapshots
-    for (const auto& pending : pending_event_snapshots_) {
-        log_util::WalPendingEventSnapshot wps;
-        wps.snapshot_id = pending.snapshot_id;
-        wps.event_name = pending.event_name;
-        wps.finalize_time_sec = static_cast<int64_t>(pending.finalize_time.seconds());
-        wps.finalize_time_nsec = static_cast<int32_t>(pending.finalize_time.nanoseconds() % 1'000'000'000LL);
-        wal.pending_event_snapshots.push_back(wps);
-    }
-
-    snapshot_writer_->save_wal(wal);
-}
-
-void LoggerNode::saveWal() {
-    std::lock_guard<std::mutex> lock(event_snapshot_mutex_);
-    saveWalLocked();
-}
-
 }  // namespace basin::continuous_logger
-
-#include <rclcpp_components/register_node_macro.hpp>
-RCLCPP_COMPONENTS_REGISTER_NODE(basin::continuous_logger::LoggerNode);

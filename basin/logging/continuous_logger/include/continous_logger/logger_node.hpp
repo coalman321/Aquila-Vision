@@ -2,7 +2,7 @@
 
 #include <basin/log_util/log_manager.hpp>
 #include <basin/log_util/log_writer.hpp>
-#include <basin/log_util/snapshot_writer.hpp>
+#include <basin/log_util/snapshot_tracker.hpp>
 #include <basin/node_core/node_core.hpp>
 #include <chrono>
 #include <filesystem>
@@ -12,7 +12,6 @@
 #include <logging_msgs/srv/snapshot_request.hpp>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <rclcpp/node.hpp>
 #include <regex>
 #include <string>
@@ -57,7 +56,7 @@ struct TopicPattern {
 
 class LoggerNode : public basin::node_core::NodeCore {
    public:
-    LoggerNode(const rclcpp::NodeOptions& options);
+    explicit LoggerNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
 
     ~LoggerNode();
 
@@ -75,8 +74,7 @@ class LoggerNode : public basin::node_core::NodeCore {
     /// @param topic The name of the topic the message originated from
     void genericCallback(std::shared_ptr<const rclcpp::SerializedMessage> msg, LoggedTopic& topic);
 
-    /// @brief Handles loading the logfile and beginning the recording process. This also handles computing the name of
-    /// the new log file to generate
+    /// @brief Opens this run's log in the log directory, named by the log manager
     void openNextLogfile();
 
     /// @brief Processes a snapshot request from the snapshot server
@@ -85,9 +83,10 @@ class LoggerNode : public basin::node_core::NodeCore {
     void handleSnapshotRequest(logging_msgs::srv::SnapshotRequest::Request::SharedPtr req,
                                logging_msgs::srv::SnapshotRequest::Response::SharedPtr resp);
 
-    /// @brief Timer callback to check disk usage and rotate logs as needed. Once rotation is done it reports the
-    /// fault `continuous_logger` / `disk_usage_high` if usage is still at or above the warning threshold. That
-    /// fault expires after two check intervals, so it clears once the checks stop reporting it
+    /// @brief Timer callback that has the log manager rotate the oldest unprotected logs and measure the disk, then
+    /// reports what it found. While snapshot-protected logs fill at least snapshot_usage_threshold_percent of the
+    /// disk it reports the fault `continuous_logger` / `disk_usage_high`. That fault expires after two check
+    /// intervals, so it clears once the checks stop reporting it
     void checkDiskUsage();
 
     /// @brief Processes event-triggered snapshots with time windows
@@ -95,41 +94,19 @@ class LoggerNode : public basin::node_core::NodeCore {
     /// @param event_time The time the event occurred
     void handleEventSnapshot(const std::string& event_name, const rclcpp::Time& event_time);
 
-    /// @brief Timer callback to finalize event snapshots after time_after window
+    /// @brief Tick callback: finalizes event snapshots whose time_after window has ended and publishes the status
     void onTick();
 
-    /// @brief Builds the current LoggerStatus. Must be called with event_snapshot_mutex_ held
+    /// @brief Builds the current LoggerStatus
     /// @param now The current time, used to stamp the status
-    logging_msgs::msg::LoggerStatus buildStatusLocked(const rclcpp::Time& now) const;
-
-    /// @brief Initialize event snapshot counters from existing snapshots
-    void initializeEventSnapshotCounters();
-
-    /// @brief Recover open and pending-event snapshots from the WAL after a crash
-    void recoverFromWAL();
+    logging_msgs::msg::LoggerStatus buildStatus(const rclcpp::Time& now) const;
 
     /// @brief Emit a manifest IPC file for a completed snapshot
     /// @param snapshot_id The ID of the snapshot to emit a manifest for
     void emitSnapshotManifest(const std::string& snapshot_id);
 
-    /// @brief Save the current WAL state (acquires event_snapshot_mutex_)
-    void saveWal();
-
-    /// @brief Save the current WAL state — must be called with event_snapshot_mutex_ held
-    void saveWalLocked();
-
     /// @brief Cleanup resources during shutdown
     void shutdown();
-
-    /// @brief Structure to track pending event snapshots
-    struct PendingEventSnapshot {
-        std::string snapshot_id;
-        std::string event_name;
-        rclcpp::Time trigger_time;
-        rclcpp::Time finalize_time;
-        std::vector<std::string> tags;
-        std::string description;
-    };
 
     ///< Node parameters for configuration
     std::unique_ptr<LoggerParams> params_;
@@ -144,8 +121,8 @@ class LoggerNode : public basin::node_core::NodeCore {
     ///< Log writing instance
     std::unique_ptr<log_util::LogWriter> log_writer_;
 
-    ///< Snapshot writing instance
-    std::unique_ptr<log_util::SnapshotWriter> snapshot_writer_;
+    ///< Snapshot lifecycle and WAL tracking
+    std::unique_ptr<log_util::SnapshotTracker> snapshot_tracker_;
 
     ///< Log manager instance
     std::unique_ptr<log_util::LogManager> log_manager_;
@@ -165,20 +142,8 @@ class LoggerNode : public basin::node_core::NodeCore {
     ///< Timer for checking disk usage periodically
     rclcpp::TimerBase::SharedPtr disk_check_timer_;
 
-    ///< Timer for finalizing event snapshots
-    rclcpp::TimerBase::SharedPtr event_snapshot_timer_;
-
     ///< Timer for forcing periodic log file splits independent of message flow
     rclcpp::TimerBase::SharedPtr split_timer_;
-
-    ///< List of pending event snapshots waiting to be finalized
-    std::vector<PendingEventSnapshot> pending_event_snapshots_;
-
-    ///< Mutex for protecting pending_event_snapshots_ and event_snapshot_counters_
-    std::mutex event_snapshot_mutex_;
-
-    ///< Per-event-name counters for generating unique snapshot IDs
-    std::map<std::string, uint64_t> event_snapshot_counters_;
 
     ///< Resolved manifest directory (defaults to {log_path}/pending)
     std::filesystem::path manifest_dir_;

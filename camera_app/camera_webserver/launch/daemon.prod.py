@@ -113,8 +113,8 @@ def generate_launch_description() -> list:
                     "log_path": get_log_dir(),
                     "log_split_size": 100 * 1024 * 1024,  # 100 MB
                     "log_split_time": 30,  # split logs every 30 seconds
-                    "rotation_threshold_percent": 60.0,  # if disk usage exceeds 60%, start deleting old logs
-                    "disk_warning_threshold_percent": 75.0,  # if rotation can't keep it under 75%, raise a fault
+                    "rotation_threshold_percent": 60.0, # Threshold to begin rotation (effective max disk usage)
+                    "snapshot_usage_threshold_percent": 40.0,  # Threshold for snapshot disk usage before faulting
 
                     # throttle is to log 1 in every N+1 messages. Set to 0 to log all messages
                     "topics": {

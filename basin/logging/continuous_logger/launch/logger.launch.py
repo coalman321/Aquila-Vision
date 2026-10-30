@@ -26,10 +26,10 @@ def generate_launch_description():
         description='Disk usage percentage (0-100) at which old logs are rotated away'
     )
 
-    disk_warning_threshold_arg = DeclareLaunchArgument(
-        'disk_warning_threshold_percent',
-        default_value='70.0',
-        description='Disk usage warning threshold percentage (0-100)'
+    snapshot_usage_threshold_arg = DeclareLaunchArgument(
+        'snapshot_usage_threshold_percent',
+        default_value='50.0',
+        description='Percentage of the disk (0-100) snapshot-protected logs may fill before a fault is raised'
     )
 
     # Create the logger node
@@ -44,8 +44,8 @@ def generate_launch_description():
             'log_split_time': LaunchConfiguration('log_split_time'),
             'log_split_size': 2**63 - 1,  # max value
             'rotation_threshold_percent': LaunchConfiguration('rotation_threshold_percent'),
-            'disk_warning_threshold_percent': LaunchConfiguration(
-                'disk_warning_threshold_percent'
+            'snapshot_usage_threshold_percent': LaunchConfiguration(
+                'snapshot_usage_threshold_percent'
             ),
             'disk_check_interval': 60.0,
             # Example topic configuration
@@ -62,6 +62,6 @@ def generate_launch_description():
         log_path_arg,
         log_split_time_arg,
         rotation_threshold_arg,
-        disk_warning_threshold_arg,
+        snapshot_usage_threshold_arg,
         logger_node,
     ])

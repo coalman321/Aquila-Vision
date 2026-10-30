@@ -1,8 +1,7 @@
 load("@aspect_rules_py//py:defs.bzl", "py_test")
-load("@rclcpp_components//:defs.bzl", "rclcpp_components_register_nodes")
 load("@rosdistro//ament:defs.bzl", "ament_index")
 load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -16,13 +15,12 @@ config_setting(
     flag_values = {"@rosdistro//:rmw": "dynamic"},
 )
 
-# The logger links rclcpp, rclcpp_components (RCLCPP_COMPONENTS_REGISTER_NODE at the bottom of
-# logger_node.cpp) and, via the library and //basin/core/node_core, rosbag2_cpp/rosbag2_storage
-# -- all cc_shared_library targets, so every consumer needs the same dynamic_deps wiring. See
-# the comment on NODE_CORE_DYNAMIC_DEPENDENCIES in //basin/core/node_core/BUILD.bazel.
+# The logger links rclcpp and, via the library and //basin/core/node_core,
+# rosbag2_cpp/rosbag2_storage -- all cc_shared_library targets, so every consumer needs the same
+# dynamic_deps wiring. See the comment on NODE_CORE_DYNAMIC_DEPENDENCIES in
+# //basin/core/node_core/BUILD.bazel.
 DYNAMIC_DEPENDENCIES = {
     "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
-    "@rclcpp_components//:rclcpp_components": "@rclcpp_components//:rclcpp_components_library",
     "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
     "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
 }
@@ -30,8 +28,7 @@ DYNAMIC_DEPENDENCIES = {
 # rosbag2_cpp/rosbag2_storage only provide the abstract reader/writer API; opening an MCAP bag
 # needs the concrete storage plugins (rosbag2_storage_default_plugins) loaded and registered via
 # ament_index, or it fails at runtime with "package 'rosbag2_storage' not found" despite linking
-# fine. The component doesn't need them in its own dynamic_deps because the container hosting it
-# (//basin/core/node_core:basin_container) already carries them; the standalone binaries do.
+# fine, so every binary and test that writes or reads a log carries them.
 STORAGE_PLUGIN_DEPENDENCIES = {
     "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins": "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins_library",
 }
@@ -48,20 +45,6 @@ LOGGER_NODE_DYNAMIC_DEPENDENCIES.update(STORAGE_PLUGIN_DEPENDENCIES)
 collect_transitive_dynamic_deps(
     name = "transitive_dynamic_deps_logger_node",
     dynamic_deps = LOGGER_NODE_DYNAMIC_DEPENDENCIES.keys(),
-)
-
-# The extractor CLI only needs the library (and so rclcpp/rosbag2), not rclcpp_components.
-CLI_DYNAMIC_DEPENDENCIES = {
-    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
-    "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
-    "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
-}
-
-CLI_DYNAMIC_DEPENDENCIES.update(STORAGE_PLUGIN_DEPENDENCIES)
-
-collect_transitive_dynamic_deps(
-    name = "transitive_dynamic_deps_cli",
-    dynamic_deps = CLI_DYNAMIC_DEPENDENCIES.keys(),
 )
 
 cc_library(
@@ -82,32 +65,12 @@ cc_library(
     ],
 )
 
-# Wraps :logger as a dlopen-able plugin, matching how RCR handles ROS2 composable nodes (see
-# //basin/safety/BUILD.bazel). rclcpp_components_register_nodes generates the ".component"
-# descriptor a container's class_loader reads (via ament_index -- see :ament_index) to find it by
-# class name, e.g. from a //basin/core/node_core:basin_container config.
-cc_shared_library(
-    name = "logger_component",
-    dynamic_deps = DYNAMIC_DEPENDENCIES.keys(),
-    exports_filter = [":logger"],
-    deps = [":logger"],
-)
-
-rclcpp_components_register_nodes(
-    name = "logger_components",
-    component = ":logger_component",
-    plugins = ["basin::continuous_logger::LoggerNode"],
-)
-
-# Registers the component, config/ and launch/ under the `continuous_logger` ament package (the
-# `package_name` a basin_container config loads the component by, and what the launch files'
-# `FindPackageShare('continuous_logger')` resolves). `libraries` publishes the message
-# typesupport libraries into lib/ next to the plugin: it is dlopen()ed through its lib/ symlink,
-# so its `$ORIGIN`-relative RUNPATH doesn't resolve, and lib/ is on LD_LIBRARY_PATH (see
-# .bazelrc). See the matching comment in //basin/launch/core/BUILD.bazel.
+# Publishes config/ and launch/ under the `continuous_logger` ament package (what the launch files'
+# `FindPackageShare('continuous_logger')` resolves). `libraries` publishes the message typesupport
+# libraries into lib/, which is on LD_LIBRARY_PATH (see .bazelrc), so rclcpp's generic
+# subscriptions can load them. See the matching comment in //basin/launch/core/BUILD.bazel.
 ament_index(
     name = "ament_index",
-    components = [":logger_components"],
     data = glob([
         "config/**",
         "launch/**",
@@ -117,15 +80,14 @@ ament_index(
     libraries = ["//basin/logging/log_util:logging_msgs"],
 )
 
-# The standalone-process form of the node, for running it outside a container. This is the
-# `logger_node` executable the launch files ask for (CMake generated it from the component with
-# rclcpp_components_register_node(... EXECUTABLE logger_node); src/logger_main.cpp is the
-# equivalent hand-written main).
+# The logger, a plain node run as its own process from src/logger_main.cpp. This is the
+# `logger_node` executable the launch files ask for, and what //deploy ships as
+# `continuous_logger_node`.
 #
 # `bazel run` works because .bazelrc sets --run_env=RUNFILES_DIR=..: rclcpp's generic subscriptions
 # resolve message typesupport through the Bazel runfiles library, and `bazel run` otherwise unsets
 # that variable, so the node would die on its first discovery tick with "Failed to create
-# Runfiles". (Tests set it themselves; see :logger_component_test.)
+# Runfiles". (Tests set it themselves; see :logger_node_test.)
 cc_binary(
     name = "logger_node",
     srcs = ["src/logger_main.cpp"],
@@ -198,26 +160,24 @@ cc_binary(
     data = ROSBAG2_AMENT_INDEX,
     dynamic_deps = select({
         ":dynamic_mode_off": [],
-        ":rmw_dynamic": [":transitive_dynamic_deps_cli"],
+        ":rmw_dynamic": [":transitive_dynamic_deps_logger_node"],
         "//conditions:default": [],
     }),
-    deps = CLI_DYNAMIC_DEPENDENCIES.values() + ["//basin/logging/log_util"],
+    deps = LOGGER_NODE_DYNAMIC_DEPENDENCIES.values() + ["//basin/logging/log_util"],
 )
 
-# Runs :logger_component as deployed -- hosted by //basin/core/node_core:basin_container, found
-# through :ament_index -- rather than linked directly into a test binary, which would never
-# exercise the plugin packaging (ament index, dlopen, typesupport libraries in lib/). Also runs
-# :snapshot_extractor_cli over the log directory it produces.
+# Runs :logger_node as deployed, as its own process, rather than linked into a test binary: it
+# exercises the binary's runtime packaging (ament index, storage plugins, typesupport libraries
+# in lib/). Also runs :snapshot_extractor_cli over the log directory it produces.
 py_test(
-    name = "logger_component_test",
+    name = "logger_node_test",
     size = "small",
-    srcs = ["test/test_logger_component.py"],
+    srcs = ["test/test_logger_node.py"],
     data = [
-        ":ament_index",
+        ":logger_node",
         ":snapshot_extractor_cli",
-        "//basin/core/node_core:basin_container",
     ],
-    main = "test/test_logger_component.py",
+    main = "test/test_logger_node.py",
     deps = [
         "//tools/ros_test_domain",
         "@rules_python//python/runfiles",

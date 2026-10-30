@@ -150,6 +150,10 @@ function DiskUsage(props: { status: LoggerStatus }): ReactElement {
           {formatBytes(status.diskFreeBytes)} free of {formatBytes(status.diskTotalBytes)}
         </span>
       </div>
+      <div className="cl-muted" title="Logs a snapshot protects from rotation">
+        Snapshots: {formatBytes(status.snapshotProtectedBytes)} ({status.snapshotUsagePercent.toFixed(1)}% of disk,
+        fault at {status.snapshotUsageThresholdPercent.toFixed(0)}%)
+      </div>
       <div className="cl-muted cl-path" title="The filesystem this directory is on">
         {status.logPath}
       </div>

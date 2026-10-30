@@ -1,10 +1,6 @@
 # Continuous Logger
 
-> **Bazel:** this package is built with Bazel in this monorepo. The `colcon`/`ros2 run`/`ros2 launch` commands and `package.xml` snippets below are from the original colcon build; see the [Quick Start](../README.md#quick-start) for the Bazel equivalents.
-
 A ROS2 node and CLI tools for continuous logging with automatic disk management, snapshot protection, and event-triggered data capture.
-
-[![ROS2](https://img.shields.io/badge/ROS2-Humble-blue)](https://docs.ros.org/en/humble/)
 
 ## Table of Contents
 
@@ -61,24 +57,9 @@ This separation allows:
 
 - `log_util` - Core library components
 - `rclcpp` - ROS2 C++ client library
-- `rclcpp_components` - ROS2 component support
 - `logging_msgs` - Custom message definitions for logging
 - `rosbag2_cpp` - ROS2 bag recording API
 - `rosbag2_storage` - ROS2 bag storage interface
-
-### Key Features
-
-1. **Modular Architecture** - Each component has a single, well-defined responsibility
-2. **Thread Safety** - All components use mutex locks for safe concurrent access
-3. **Automatic Disk Management** - Prevents disk overflow with intelligent log rotation
-4. **Snapshot Protection** - Important data is never deleted automatically
-5. **Flexible Configuration** - All parameters configurable via ROS parameters
-6. **Topic Throttling** - Reduce disk usage for high-frequency topics
-7. **Discovery System** - Automatically finds and subscribes to topics
-8. **MCAP Format** - Modern, efficient storage format
-9. **Event-Triggered Snapshots** - Automatic data capture around critical events with configurable time windows
-10. **Per-Event Counters** - Unique snapshot numbering for each event type with persistence across restarts
-11. **Snapshot Extraction Tool** - CLI utility to extract snapshots from log files to standalone rosbags
 
 ---
 
@@ -106,9 +87,9 @@ Manages log storage on disk.
 - Monitors log directory for new MCAP files
 - Monitors snapshot file for new snapshots
 - Provides interface for querying snapshots
-- Rotates old log files based on disk capacity
-- Ensures snapshot-associated logs are preserved
-- Provides disk usage warnings
+- Rotates the oldest log files once disk usage reaches a threshold, until it is back under it
+- Ensures snapshot-associated logs, and the log being written, are preserved
+- Reports how much of the disk snapshot-protected logs fill
 
 ### 4. Logger Node (this package)
 The main ROS2 node that orchestrates all library components.
@@ -138,46 +119,6 @@ continuous_logger package:
 
 ---
 
-## Quick Start
-
-### Installation & Setup
-
-```bash
-cd /home/coalman321/frc-2026
-colcon build --packages-select continuous_logger
-source install/setup.bash
-```
-
-### Starting the Logger
-
-**Default Configuration:**
-```bash
-ros2 run continuous_logger logger
-```
-
-**With Config File:**
-```bash
-ros2 launch continuous_logger logger_with_config.launch.py
-```
-
-**With Custom Parameters:**
-```bash
-ros2 launch continuous_logger logger.launch.py \
-  log_path:=/data/logs \
-  log_split_time:=120 \
-  rotation_threshold_percent:=85.0
-```
-
-Or with ROS args:
-```bash
-ros2 run continuous_logger logger --ros-args \
-  -p log_path:=/data/logs \
-  -p log_split_time:=60 \
-  -p rotation_threshold_percent:=85.0
-```
-
----
-
 ## Configuration
 
 ### Configuration Parameters
@@ -199,7 +140,7 @@ The logger node accepts the following parameters:
 
 #### Disk Management Configuration
 - `rotation_threshold_percent`: Disk usage percentage at which the oldest logs no snapshot protects are deleted (default: 70.0)
-- `disk_warning_threshold_percent`: Warning threshold percentage (default: 80.0)
+- `snapshot_usage_threshold_percent`: Percentage of the disk snapshot-protected logs may fill before the `disk_usage_high` fault is raised (default: 50.0)
 - `disk_check_interval`: Interval for checking disk usage in seconds (default: 60.0)
 
 #### Event Snapshot Configuration
@@ -224,7 +165,7 @@ Create `config/logger.yaml`:
     
     # Disk management
     rotation_threshold_percent: 85.0
-    disk_warning_threshold_percent: 75.0
+    snapshot_usage_threshold_percent: 50.0
     disk_check_interval: 60.0
     
     # Topics to log
@@ -274,42 +215,6 @@ Create `config/logger.yaml`:
 ---
 
 ## Usage Guide
-
-### Complete Workflow Example
-
-Here's a complete example showing the full lifecycle: recording → snapshot creation → extraction → playback.
-
-**1. Start the logger:**
-```bash
-ros2 run continuous_logger logger
-```
-
-**2. Create an event-triggered snapshot by publishing a timed event:**
-```bash
-ros2 topic pub /log/metadata logging_msgs/msg/LogMetadata \
-  "{header: {stamp: {sec: $(date +%s), nanosec: 0}}, \
-    timed_event: true, \
-    key_name: 'test_event', \
-    yaml_metadata: 'test: data'}" --once
-```
-
-**3. Wait for the logger to automatically create and finalize the snapshot**
-
-**4. List the created snapshots:**
-```bash
-ros2 run continuous_logger snapshot_extractor_cli list /tmp/log
-```
-
-**5. Extract the snapshot:**
-```bash
-ros2 run continuous_logger snapshot_extractor_cli extract \
-  /tmp/log event_test_event_0 /tmp/extracted
-```
-
-**6. Play the extracted snapshot:**
-```bash
-ros2 bag play /tmp/extracted/event_test_event_0
-```
 
 ### Manual Snapshots
 
@@ -399,48 +304,6 @@ ros2 topic pub /log/metadata logging_msgs/msg/LogMetadata \
 6. Applies configured tags
 7. Sets trigger: `event-system_error`
 
-#### Python Example
-
-```python
-#!/usr/bin/env python3
-import rclpy
-from rclpy.node import Node
-from logging_msgs.msg import LogMetadata
-
-class EventPublisher(Node):
-    def __init__(self):
-        super().__init__('event_publisher')
-        self.publisher = self.create_publisher(
-            LogMetadata, 
-            '/log/metadata', 
-            10
-        )
-    
-    def publish_critical_error(self, error_info):
-        """Publish a critical error event that triggers snapshot"""
-        msg = LogMetadata()
-        
-        # Set timestamp to current time
-        now = self.get_clock().now()
-        msg.header.stamp = now.to_msg()
-        
-        # This is a timed event that can trigger snapshots
-        msg.timed_event = True
-        
-        # Event name matches configuration
-        msg.key_name = 'system_critical_error'
-        
-        # YAML formatted metadata
-        msg.yaml_metadata = f"""
-error_code: {error_info['code']}
-severity: {error_info['severity']}
-module: {error_info['module']}
-message: {error_info['message']}
-"""
-        
-        self.publisher.publish(msg)
-```
-
 ### Metadata Events
 
 Metadata events are written to the `/log/metadata` topic as `logging_msgs/msg/LogMetadata` messages. These are stored in a special channel in the MCAP file.
@@ -467,30 +330,29 @@ ros2 topic pub /log/metadata logging_msgs/msg/LogMetadata \
 The logger automatically manages disk space:
 
 ```yaml
-rotation_threshold_percent: 80.0          # Start deleting old MCAP files at 80% disk usage
-disk_warning_threshold_percent: 70.0   # Warn when disk usage exceeds 70%
-disk_check_interval: 60.0             # Check disk every 60 seconds
+rotation_threshold_percent: 80.0          # Delete the oldest MCAP files once disk usage reaches 80%
+snapshot_usage_threshold_percent: 50.0    # Fault once snapshot-protected logs fill 50% of the disk
+disk_check_interval: 60.0                 # Check disk every 60 seconds
 ```
 
-**Important**: MCAP files that overlap with any snapshot's time range are never automatically deleted! Only MCAP files that don't overlap with snapshots are eligible for rotation.
+Each disk check (every `disk_check_interval`) deletes the oldest MCAP files, one after another, until
+disk usage is back under `rotation_threshold_percent`.
 
-The logger logs warnings when disk usage exceeds the warning threshold:
+**Important**: MCAP files that overlap with any snapshot's time range are never automatically deleted,
+including a snapshot that is still running (a manual one not yet stopped, or an event snapshot inside its
+`time_after` window, which covers from its start onward). Nor is the file currently being written. If
+everything left is protected, rotation stops and the logger warns that it can't get usage under the threshold.
 
-```
-[WARN] [continuous_logger]: Disk usage is high: 72.5%
-```
-
-It also raises a fault for as long as usage is at or above the warning threshold: fault system
-`continuous_logger`, name `disk_usage_high`, on `/state/fault_report` like any other node's (the
-fault monitor TUI and the Foxglove Fault Monitor list it). The description gives the usage and both
-thresholds. Each disk check (every `disk_check_interval`) reports it if usage is still at or above the
-threshold once any rotation it did is done. It expires after two check intervals, so it stays up
-through a late check and clears at most two intervals after a check finds usage back under the
-threshold. Nothing acts on it unless the safety aggregator has a handler for it (see
-`basin/safety/cfg/safety_agg.yaml`); without one it is only reported, which is what you want for a
-full log disk, as it does not affect driving.
-
-When the max threshold is reached, it automatically deletes the oldest MCAP files that are not associated with snapshots.
+Since rotation can't free snapshot-protected logs, the logger raises a fault for as long as they fill at
+least `snapshot_usage_threshold_percent` of the disk: fault system `continuous_logger`, name
+`disk_usage_high`, on `/state/fault_report` like any other node's (the fault monitor TUI and the Foxglove
+Fault Monitor list it). It means the disk is almost full of logs the logger may not delete: upload or
+delete snapshots to free space. The description gives the snapshot usage, its threshold and the total
+usage. Each disk check reports it if snapshot usage is still at or above the threshold once any rotation
+it did is done. It expires after two check intervals, so it stays up through a late check and clears at
+most two intervals after a check finds snapshot usage back under the threshold. Nothing acts on it unless
+the safety aggregator has a handler for it (see `basin/safety/cfg/safety_agg.yaml`); without one it is
+only reported, which is what you want for a full log disk, as it does not affect driving.
 
 ### Status Topic
 
@@ -502,7 +364,8 @@ subscriber that joins late gets the latest one at once):
 |-------|---------|
 | `stamp` | When the status was built |
 | `log_path`, `disk_usage_percent`, `disk_total_bytes`, `disk_free_bytes` | The filesystem the log directory is on. The percentage is the one rotation compares against `disk_rotation_threshold_percent` |
-| `disk_rotation_threshold_percent`, `disk_warning_threshold_percent` | The configured limits, so a reader can tell how close rotation is |
+| `disk_rotation_threshold_percent` | The configured rotation limit, so a reader can tell how close rotation is |
+| `snapshot_usage_percent`, `snapshot_protected_bytes`, `snapshot_usage_threshold_percent` | How much of the disk snapshot-protected logs fill, as of the last disk check, and the limit at which the `disk_usage_high` fault is raised |
 | `events` | One entry per `event_snapshots.<key>` configuration: its name, window, tags, description and `trigger_count`, the number of snapshots it has triggered (counting earlier runs), which is also the `<n>` of its next `event_<name>_<n>` snapshot |
 | `snapshots` | Every snapshot that is running (manual, not yet stopped) or pending (an event snapshot inside its `time_after` window), then the 50 most recently started completed ones, each group newest first. Times are epoch seconds, and `end_time` is -1 until the snapshot has finished |
 | `total_snapshot_count` | How many snapshots exist in all, including those `snapshots` leaves out |
@@ -520,28 +383,6 @@ The `snapshot_extractor_cli` tool allows you to extract snapshots from log files
 - Reducing dataset size for testing
 
 **Note:** The extraction logic is implemented in the `log_util` package, making it reusable in custom applications. This CLI tool provides a convenient command-line interface to that functionality.
-
-#### Available Commands
-
-**List all snapshots:**
-```bash
-ros2 run continuous_logger snapshot_extractor_cli list <log_dir>
-```
-
-**Extract a specific snapshot:**
-```bash
-ros2 run continuous_logger snapshot_extractor_cli extract <log_dir> <snapshot_id> <output_dir>
-```
-
-**Extract all snapshots:**
-```bash
-ros2 run continuous_logger snapshot_extractor_cli extract-all <log_dir> <output_dir>
-```
-
-**Validate log directory:**
-```bash
-ros2 run continuous_logger snapshot_extractor_cli validate <log_dir>
-```
 
 #### Usage Examples
 
@@ -595,21 +436,6 @@ ros2 run continuous_logger snapshot_extractor_cli validate /data/logs
 # Output:
 # ✓ Log directory is valid: /data/logs
 # ✓ Found 3 snapshot(s)
-```
-
-#### Playing Extracted Snapshots
-
-Once extracted, you can play the snapshot like any standard rosbag:
-
-```bash
-# Play the extracted snapshot
-ros2 bag play /data/extracted/event_collision_detected_0
-
-# View snapshot info
-ros2 bag info /data/extracted/event_collision_detected_0
-
-# View snapshot metadata
-cat /data/extracted/event_collision_detected_0/snapshots.yaml
 ```
 
 #### Output Structure
@@ -693,53 +519,6 @@ snapshots:
 - id: "event_system_error_3"      # Next in sequence
 ```
 
-**Benefits:**
-- ✅ No duplicate snapshot IDs across restarts
-- ✅ Counter sequences remain consistent
-- ✅ Easy to see total number of events across all sessions
-- ✅ Snapshot files remain valid after logger restarts
-
-### Filtering Snapshots
-
-To find all snapshots for a specific event:
-
-```bash
-# Using grep
-grep "event_system_error_" /tmp/log/snapshots.yaml
-
-# Count occurrences
-grep -c "event_system_error_" /tmp/log/snapshots.yaml
-
-# List all unique event names
-grep "id:" /tmp/log/snapshots.yaml | \
-  sed 's/.*event_\(.*\)_[0-9]*.*/\1/' | \
-  sort -u
-```
-
-### Best Practices
-
-1. **Use Descriptive Event Names**
-   ```yaml
-   # Good
-   event_name: "navigation.path_planning_failed"
-   event_name: "safety.collision_detected"
-   
-   # Avoid
-   event_name: "e1"
-   event_name: "thing"
-   ```
-
-2. **Use Hierarchical Naming**
-   ```yaml
-   event_name: "system.hardware.motor_failure"
-   event_name: "system.hardware.sensor_failure"
-   event_name: "safety.collision.front"
-   ```
-
-3. **Consistent Naming Convention**
-   - Choose one: snake_case, dot.notation, or kebab-case
-   - Apply consistently across all events
-
 ---
 
 ## File Structure
@@ -791,92 +570,6 @@ snapshots:
 
 ---
 
-## Quick Reference
-
-### Common Commands
-
-```bash
-# Build
-colcon build --packages-select continuous_logger
-source install/setup.bash
-
-# Run with defaults
-ros2 run continuous_logger logger
-
-# Run with config
-ros2 launch continuous_logger logger_with_config.launch.py
-
-# Start snapshot
-ros2 service call /log/snapshot logging_msgs/srv/SnapshotRequest \
-  "{request_id: 1, snapshot_name: 'event_name'}"
-
-# Stop snapshot
-ros2 service call /log/snapshot logging_msgs/srv/SnapshotRequest \
-  "{request_id: 2, snapshot_name: 'event_name'}"
-
-# Publish timed event
-ros2 topic pub /log/metadata logging_msgs/msg/LogMetadata \
-  "{header: {stamp: {sec: $(date +%s), nanosec: 0}}, \
-    timed_event: true, \
-    key_name: 'event_name', \
-    yaml_metadata: 'key: value'}" --once
-
-# Check disk usage
-df -h /data/logs
-du -sh /data/logs/*.mcap
-
-# View snapshots
-cat /data/logs/snapshots.yaml
-
-# Monitor logs
-tail -f /tmp/continuous_logs/*.mcap
-
-# Enable debug logging
-ros2 run continuous_logger logger --ros-args --log-level debug
-
-# List all snapshots
-ros2 run continuous_logger snapshot_extractor_cli list /data/logs
-
-# Extract a single snapshot
-ros2 run continuous_logger snapshot_extractor_cli extract \
-  /data/logs event_collision_0 /data/extracted
-
-# Extract all snapshots
-ros2 run continuous_logger snapshot_extractor_cli extract-all \
-  /data/logs /data/extracted
-
-# Validate log directory
-ros2 run continuous_logger snapshot_extractor_cli validate /data/logs
-
-# Play extracted snapshot
-ros2 bag play /data/extracted/event_collision_0
-
-# View extracted snapshot info
-ros2 bag info /data/extracted/event_collision_0
-```
-
-### Parameter Summary
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `log_path` | string | `/tmp/log` | Log directory path |
-| `log_prefix` | string | `log_` | Log directory prefix |
-| `log_split_time` | int | 30 | Split interval (seconds) |
-| `log_split_size` | int | max | Max file size (bytes) |
-| `rotation_threshold_percent` | double | 70.0 | Disk usage (%) at which old logs are rotated away |
-| `disk_warning_threshold_percent` | double | 70.0 | Warning threshold (%) |
-| `disk_check_interval` | double | 60.0 | Check interval (seconds) |
-| `topic_keys` | list | `['rosout']` | List of topic identifiers |
-| `<key>.name` | string | - | Actual topic name |
-| `<key>.throttle` | int | 0 | Message throttle count |
-| `event_snapshot_keys` | list | `[]` | List of event snapshot identifiers |
-| `<key>.event_name` | string | - | Event name to trigger on |
-| `<key>.time_before` | double | 5.0 | Seconds before event |
-| `<key>.time_after` | double | 5.0 | Seconds after event |
-| `<key>.tags` | list | `[]` | Tags for snapshot |
-| `<key>.description` | string | - | Description template |
-
----
 
 ## Implementation Details
 
@@ -899,8 +592,8 @@ ros2 bag info /data/extracted/event_collision_0
 #### LogManager (`log_manager.hpp/cpp`)
 - Monitors log directory for individual MCAP files
 - Tracks disk usage and implements rotation policy
-- Protects MCAP files overlapping with snapshots from deletion
-- Provides disk usage warnings
+- Protects MCAP files overlapping with snapshots (running or complete) from deletion
+- Reports how much of the disk snapshot-protected logs fill
 - Queries MCAP file time ranges to determine snapshot associations
 
 #### LoggerNode (`logger_node.hpp/cpp`)
@@ -989,18 +682,6 @@ Monitor disk usage regularly:
 
 ## Troubleshooting
 
-### Logger Not Starting
-
-1. Check that the log directory is writable:
-   ```bash
-   ls -la /tmp/log
-   ```
-
-2. Check for error messages:
-   ```bash
-   ros2 run continuous_logger logger --ros-args --log-level debug
-   ```
-
 ### Topics Not Being Logged
 
 1. Check that topics exist:
@@ -1027,18 +708,6 @@ Monitor disk usage regularly:
    cat /data/logs/snapshots.yaml
    ```
 
-### Snapshot Service Not Responding
-
-1. Check if the service exists:
-   ```bash
-   ros2 service list | grep snapshot
-   ```
-
-2. Test with a ping request:
-   ```bash
-   ros2 service call /log/snapshot logging_msgs/srv/SnapshotRequest \
-     "{request_id: 0, snapshot_name: ''}"
-   ```
 
 ### Event Not Triggering Snapshot
 
@@ -1059,14 +728,6 @@ Monitor disk usage regularly:
 - Start time cannot be before log recording began
 - Ensure your log split time is longer than your time windows
 - Check system clock synchronization
-
-### Duplicate Snapshot IDs
-
-**Symptom:** Logger warns "Failed to start event snapshot"
-
-**Cause:** Snapshot ID already exists
-
-**Solution:** This is expected behavior after restart. The duplicate is rejected, and the original snapshot is preserved. Counters should be initialized properly to avoid this - check that `initializeEventSnapshotCounters()` is being called.
 
 ### Snapshot Extraction Fails
 
@@ -1117,44 +778,10 @@ Monitor disk usage regularly:
 
 ---
 
-## Future Enhancements
-
-Based on the design document, future work could include:
-
-1. **Log Reader Component**: 
-   - ✅ **Extract snapshots to separate bags** (implemented via `snapshot_extractor_cli`)
-   - Convert raw logs to indexed ROS bags
-   - Query metadata events
-   - Log inspection utility
-
-2. **CLI Tools**:
-   - ✅ **Snapshot extraction utility** (implemented)
-   - Metadata query tool
-   - Advanced log inspection features
-   - Snapshot comparison tool
-
-3. **Advanced Features**:
-   - Dynamic event configuration (runtime updates)
-   - Event filtering (regex or pattern matching)
-   - Conditional snapshots (metadata criteria)
-   - Snapshot merging (combine overlapping events)
-   - Network-based log transfer
-   - Compression options
-   - Max snapshots limit
-   - Event statistics tracking
-
-4. **Testing**:
-   - Unit tests for each component
-   - Integration tests
-   - Performance benchmarks
-
----
-
 ## Dependencies
 
 The package depends on:
 - `rclcpp` - ROS2 C++ client library
-- `rclcpp_components` - Component architecture
 - `logging_msgs` - Custom message definitions
 - `rosbag2_cpp` - ROS bag writing
 - `rosbag2_storage` - Storage interfaces

@@ -117,9 +117,13 @@ export type LoggerStatus = {
   logPath: string;
   diskUsagePercent: number;
   diskRotationThresholdPercent: number;
-  diskWarningThresholdPercent: number;
   diskTotalBytes: number;
   diskFreeBytes: number;
+  /** How much of the disk snapshot-protected logs fill, which rotation can't free, as of the last disk check. */
+  snapshotUsagePercent: number;
+  /** At or above this the logger raises its disk_usage_high fault. */
+  snapshotUsageThresholdPercent: number;
+  snapshotProtectedBytes: number;
   events: ConfiguredEvent[];
   /** Everything running or pending, then the most recently started completed ones. */
   snapshots: SnapshotEntry[];
@@ -161,9 +165,11 @@ export function parseLoggerStatus(message: unknown, arrivedMs: number): LoggerSt
     logPath: record.log_path,
     diskUsagePercent: toNumber(record.disk_usage_percent),
     diskRotationThresholdPercent: toNumber(record.disk_rotation_threshold_percent),
-    diskWarningThresholdPercent: toNumber(record.disk_warning_threshold_percent),
     diskTotalBytes: toNumber(record.disk_total_bytes),
     diskFreeBytes: toNumber(record.disk_free_bytes),
+    snapshotUsagePercent: toNumber(record.snapshot_usage_percent),
+    snapshotUsageThresholdPercent: toNumber(record.snapshot_usage_threshold_percent),
+    snapshotProtectedBytes: toNumber(record.snapshot_protected_bytes),
     events: toRecords(record.events).map((event) => ({
       name: toText(event.event_name),
       timeBefore: toNumber(event.time_before),
@@ -196,12 +202,23 @@ export function snapshotStateLabel(state: number): string {
 
 export type DiskLevel = "ok" | "warn" | "bad";
 
-/** Past the warning threshold the logger logs a warning; at the maximum it starts rotating logs away. */
+/** How close snapshot usage may get to its threshold before the panel warns of it. */
+const SNAPSHOT_WARN_FRACTION = 0.8;
+
+/**
+ * Bad once snapshots fill their share of the disk (the logger's disk_usage_high fault is up) or rotation has
+ * started; a warning as snapshots near their share.
+ */
 export function diskLevel(status: LoggerStatus): DiskLevel {
-  if (status.diskUsagePercent >= status.diskRotationThresholdPercent) {
+  if (
+    status.snapshotUsagePercent >= status.snapshotUsageThresholdPercent ||
+    status.diskUsagePercent >= status.diskRotationThresholdPercent
+  ) {
     return "bad";
   }
-  return status.diskUsagePercent >= status.diskWarningThresholdPercent ? "warn" : "ok";
+  return status.snapshotUsagePercent >= SNAPSHOT_WARN_FRACTION * status.snapshotUsageThresholdPercent
+    ? "warn"
+    : "ok";
 }
 
 /** 12.3 GB: decimal units, like the disk size a filesystem is sold at. */

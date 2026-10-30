@@ -10,7 +10,7 @@
     
     # Disk management configuration
     rotation_threshold_percent: 80.0  # Disk usage at which the oldest unprotected logs are deleted
-    disk_warning_threshold_percent: 90.0  # Warning threshold for disk usage
+    snapshot_usage_threshold_percent: 50.0  # Fault when snapshot-protected logs fill this much of the disk
     disk_check_interval: 60.0  # Check every 60 seconds
     
     # Topics to log (keyed under "topics.<key>")

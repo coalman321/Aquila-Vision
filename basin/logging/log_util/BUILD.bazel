@@ -1,7 +1,18 @@
 load("@rosidl_default_generators//:defs.bzl", "cc_ros_library")
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rosdistro//cc:defs.bzl", "collect_transitive_dynamic_deps")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "dynamic_mode_off",
+    values = {"dynamic_mode": "off"},
+)
+
+config_setting(
+    name = "rmw_dynamic",
+    flag_values = {"@rosdistro//:rmw": "dynamic"},
+)
 
 # log_writer.hpp exposes LogMetadata in its public API, so every consumer needs the generated
 # C++ (and typesupport) for it. SnapshotRequest and the status messages are only used by
@@ -33,12 +44,14 @@ cc_library(
         "src/log_manager.cpp",
         "src/log_writer.cpp",
         "src/snapshot_extractor.cpp",
+        "src/snapshot_tracker.cpp",
         "src/snapshot_writer.cpp",
     ],
     hdrs = [
         "include/basin/log_util/log_manager.hpp",
         "include/basin/log_util/log_writer.hpp",
         "include/basin/log_util/snapshot_extractor.hpp",
+        "include/basin/log_util/snapshot_tracker.hpp",
         "include/basin/log_util/snapshot_writer.hpp",
     ],
     includes = ["include"],
@@ -48,5 +61,57 @@ cc_library(
         "@rosbag2_cpp//:rosbag2_cpp_library",
         "@rosbag2_storage//:rosbag2_storage_library",
         "@rosdistro//cc:yaml-cpp_library",
+    ],
+)
+
+# The tests write and read real MCAP files, so like the logger's they carry the rosbag2 storage
+# plugins and their ament_index data (see STORAGE_PLUGIN_DEPENDENCIES in
+# //basin/logging/continuous_logger/BUILD.bazel).
+TEST_DYNAMIC_DEPENDENCIES = {
+    "@rclcpp//:rclcpp": "@rclcpp//:rclcpp_library",
+    "@rosbag2_cpp//:rosbag2_cpp": "@rosbag2_cpp//:rosbag2_cpp_library",
+    "@rosbag2_storage//:rosbag2_storage": "@rosbag2_storage//:rosbag2_storage_library",
+    "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins": "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins_library",
+}
+
+collect_transitive_dynamic_deps(
+    name = "transitive_dynamic_deps_test",
+    dynamic_deps = TEST_DYNAMIC_DEPENDENCIES.keys(),
+)
+
+# Rotation, snapshot protection, snapshot usage and run naming, over a scratch directory of real
+# MCAP files. Neither test has a main() of its own, so they use the googletest wrapper.
+cc_test(
+    name = "log_manager_test",
+    size = "small",
+    srcs = ["test/test_log_manager.cpp"],
+    data = [
+        "@rosbag2_cpp//:ament_index",
+        "@rosbag2_storage//:ament_index",
+    ],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps_test"],
+        "//conditions:default": [],
+    }),
+    deps = TEST_DYNAMIC_DEPENDENCIES.values() + [
+        ":log_util",
+        "@rosdistro//cc:googletest",
+    ],
+)
+
+# The snapshot lifecycle and its WAL, including recovery after a crash.
+cc_test(
+    name = "snapshot_tracker_test",
+    size = "small",
+    srcs = ["test/test_snapshot_tracker.cpp"],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps_test"],
+        "//conditions:default": [],
+    }),
+    deps = TEST_DYNAMIC_DEPENDENCIES.values() + [
+        ":log_util",
+        "@rosdistro//cc:googletest",
     ],
 )

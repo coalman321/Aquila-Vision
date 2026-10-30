@@ -244,11 +244,16 @@ Gets MCAP files associated with a specific snapshot.
 ##### `get_disk_usage_percent() -> float`
 Gets the current disk usage percentage (0-100).
 
-##### `should_warn_disk_usage() -> bool`
-Checks if a warning should be issued due to high disk usage.
+##### `check_disk(active_log_file: str = "") -> DiskCheckResult`
+Rescans the directory and deletes the oldest logs no snapshot protects until disk usage is under the rotation
+threshold, never `active_log_file`. The result has `rotated_files`, `disk_usage_percent`, `rotation_blocked`,
+`protected_bytes`, `snapshot_usage_percent` and `snapshot_usage_high`.
 
-##### `check_and_rotate_logs() -> bool`
-Checks disk usage and rotates old logs if needed. Returns True if rotation was performed.
+##### `get_last_disk_check() -> DiskCheckResult`
+The result of the most recent `check_disk`.
+
+##### `prepare_log_directory()` / `next_log_name(prefix: str) -> str`
+Create the log directory, and name the next run's log one past the highest run number on disk.
 
 **Example:**
 ```python
@@ -453,18 +458,14 @@ from log_util_py import LogManager
 
 manager = LogManager()
 manager.set_log_directory('/path/to/logs')
-manager.set_disk_limits(rotation_threshold_percent=80, warning_threshold_percent=70)
+manager.set_disk_limits(rotation_threshold_percent=80, snapshot_usage_threshold_percent=50)
 
-num_logs = manager.scan_log_directory()
-usage = manager.get_disk_usage_percent()
-
-print(f"Found {num_logs} MCAP files")
-print(f"Disk usage: {usage:.1f}%")
-
-if manager.should_warn_disk_usage():
-    print("⚠ Warning: High disk usage!")
-    if manager.check_and_rotate_logs():
-        print("✓ Old logs rotated")
+disk = manager.check_disk()
+print(f"Disk usage: {disk.disk_usage_percent:.1f}%")
+if disk.rotated_files:
+    print(f"✓ Rotated {disk.rotated_files} old logs")
+if disk.snapshot_usage_high:
+    print(f"⚠ Snapshots fill {disk.snapshot_usage_percent:.1f}% of the disk!")
 ```
 
 ### Use Case 4: Find and Analyze Long Duration Snapshots

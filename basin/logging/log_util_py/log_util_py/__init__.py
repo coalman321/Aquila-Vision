@@ -34,6 +34,7 @@ def _preload_rmw_implementation():
 _preload_rmw_implementation()
 
 from ._log_util_py import (  # noqa: E402
+    DiskCheckResult,
     LogManager,
     SnapshotExtractor,
     SnapshotInfo,
@@ -45,6 +46,7 @@ __all__ = [
     'SnapshotWriter',
     'SnapshotExtractor',
     'LogManager',
+    'DiskCheckResult',
 ]
 
 __version__ = '0.0.0'

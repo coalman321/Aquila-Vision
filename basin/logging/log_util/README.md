@@ -1,10 +1,5 @@
 # log_util
-
-> **Bazel:** this package is built with Bazel in this monorepo. The `colcon`/`ros2 run`/`ros2 launch` commands and `package.xml` snippets below are from the original colcon build; see the [Quick Start](../README.md#quick-start) for the Bazel equivalents.
-
 This package contains the core library components for continuous ROS2 bag recording with snapshot management.
-
-[![ROS2](https://img.shields.io/badge/ROS2-Humble-blue)](https://docs.ros.org/en/humble/)
 
 ## Overview
 
@@ -12,7 +7,8 @@ This library provides reusable components that can be integrated into custom log
 
 - **LogWriter**: Handles writing MCAP files to disk with time/size-based splitting
 - **SnapshotWriter**: Manages snapshot metadata in YAML files
-- **LogManager**: Manages log storage, disk usage, and log rotation
+- **SnapshotTracker**: Runs manual and event snapshots through their lifetime, keeping a WAL so a crash never leaves one open
+- **LogManager**: Manages the log directory, disk usage, and log rotation
 - **SnapshotExtractor**: Extracts snapshot data from MCAP logs
 
 ## Package Split
@@ -33,44 +29,6 @@ This separation allows you to:
 - `rosbag2_cpp`: ROS2 bag recording API
 - `rosbag2_storage`: ROS2 bag storage interface
 - `yaml-cpp`: YAML file parsing and writing
-
-## Installation
-
-```bash
-# Build the library package
-cd ~/ros2_ws
-colcon build --packages-select log_util
-source install/setup.bash
-```
-
-## Usage
-
-### As a Dependency
-
-Add this package as a dependency in your `package.xml`:
-```xml
-<depend>log_util</depend>
-```
-
-Include the headers in your code:
-```cpp
-#include "log_util/log_writer.hpp"
-#include "log_util/snapshot_writer.hpp"
-#include "log_util/log_manager.hpp"
-#include "log_util/snapshot_extractor.hpp"
-```
-
-Link against the library in `CMakeLists.txt`:
-```cmake
-find_package(log_util REQUIRED)
-
-add_executable(your_app src/your_app.cpp)
-ament_target_dependencies(your_app 
-  log_util
-  rclcpp
-  # ... other dependencies
-)
-```
 
 ## API Reference
 
@@ -155,17 +113,19 @@ for (const auto& snapshot : snapshots) {
 
 ### LogManager
 
-Monitors disk usage, manages log files, and handles log rotation while protecting snapshot-associated files.
+Prepares the log directory, names each run's log, and keeps the disk in check: once usage reaches the rotation threshold it deletes the oldest MCAP files until usage is back under it. It never deletes a file that overlaps a snapshot (running or complete) or a pending upload manifest, nor the file being written, and it reports how much of the disk those protected files fill.
 
 **Key Methods:**
 - `set_log_directory()`: Sets the log directory to manage
-- `set_disk_limits()`: Sets disk usage limits
+- `set_disk_limits()`: Sets the rotation threshold and the snapshot usage threshold
+- `prepare_log_directory()`: Creates the log directory, or throws if the path isn't one
+- `next_log_name()`: Name for this run's log, one past the highest run number on disk
 - `scan_log_directory()`: Scans for MCAP files and snapshots
-- `check_and_rotate_logs()`: Checks disk usage and rotates logs
+- `check_disk()`: Rescans, rotates, and returns a `DiskCheckResult` (files rotated, usage, protected bytes, whether snapshot usage is at its threshold)
+- `get_last_disk_check()`: The most recent `check_disk()` result
 - `get_log_files()`: Gets list of all MCAP files
 - `get_snapshot_log_files()`: Gets MCAP files for a specific snapshot
 - `get_disk_usage_percent()`: Gets current disk usage percentage
-- `should_warn_disk_usage()`: Checks if warning threshold is exceeded
 
 **Thread Safety:** All methods are thread-safe using internal mutex.
 
@@ -175,33 +135,23 @@ Monitors disk usage, manages log files, and handles log rotation while protectin
 
 log_util::LogManager manager;
 manager.set_log_directory("/path/to/logs");
-manager.set_disk_limits(80.0, 70.0); // rotate at 80%, warn at 70%
+manager.set_disk_limits(80.0, 50.0); // rotate at 80%, flag snapshots filling 50%
+manager.prepare_log_directory();
+std::string log_name = manager.next_log_name("log_");
 
-// Scan existing logs
-size_t num_logs = manager.scan_log_directory();
-
-// Check and rotate if needed
-if (manager.check_and_rotate_logs()) {
-    std::cout << "Rotated old logs due to disk usage" << std::endl;
+// Periodically: rotate if needed, never touching the file being written
+log_util::DiskCheckResult disk = manager.check_disk(writer.get_current_file_path());
+if (disk.rotated_files > 0) {
+    std::cout << "Rotated " << disk.rotated_files << " old logs" << std::endl;
 }
-
-// Check disk usage
-double usage = manager.get_disk_usage_percent();
-if (manager.should_warn_disk_usage()) {
-    std::cout << "Warning: High disk usage at " << usage << "%" << std::endl;
+if (disk.snapshot_usage_high) {
+    std::cout << "Snapshots fill " << disk.snapshot_usage_percent << "% of the disk" << std::endl;
 }
 ```
 
 ### SnapshotExtractor
 
 Extracts specific time ranges from MCAP logs into separate rosbag directories.
-
-**Key Methods:**
-- `extract_snapshot()`: Extracts a single snapshot to a rosbag
-- `extract_all_snapshots()`: Extracts all snapshots
-- `list_snapshots()`: Lists all available snapshots
-- `validate_log_directory()`: Validates log directory structure
-- `find_relevant_mcap_files()`: Finds MCAP files for a time range
 
 **Thread Safety:** Methods are not thread-safe; use external synchronization if needed.
 
@@ -265,11 +215,3 @@ snapshots:
       - "safety"
       - "collision"
 ```
-
-## License
-
-MIT - see the repository root `LICENSE`.
-
-## Maintainer
-
-Cole Tucker <cjtucker321@gmail.com>
