@@ -149,6 +149,34 @@ TEST_F(LogManagerTest, ReportsSnapshotUsageAgainstItsThreshold) {
     EXPECT_FALSE(manager_.check_disk("").snapshot_usage_high);
 }
 
+TEST_F(LogManagerTest, ARemovedSnapshotNoLongerProtectsItsLogs) {
+    auto log = writeLog("log_0", 2000, 2010, 100);
+    addSnapshot("snap", 2000, 2010);
+    manager_.set_disk_limits(100.0, 100.0);
+    ASSERT_EQ(manager_.check_disk("").protected_bytes, std::filesystem::file_size(log));
+
+    SnapshotWriter snapshots;
+    snapshots.set_recording_directory(dir_.string());
+    snapshots.load_from_file();
+    ASSERT_TRUE(snapshots.remove_snapshot("snap"));
+
+    EXPECT_EQ(manager_.check_disk("").protected_bytes, 0u);
+    EXPECT_TRUE(std::filesystem::exists(log));
+}
+
+TEST_F(LogManagerTest, ReportsTheBytesOfEveryLog) {
+    auto protected_log = writeLog("log_0", 2000, 2010, 100);
+    auto other_log = writeLog("log_1", 3000, 3010, 300);
+    addSnapshot("snap", 2000, 2010);
+    manager_.set_disk_limits(100.0, 100.0);
+
+    DiskCheckResult result = manager_.check_disk("");
+
+    EXPECT_EQ(result.protected_bytes, std::filesystem::file_size(protected_log));
+    EXPECT_EQ(result.log_bytes, std::filesystem::file_size(protected_log) + std::filesystem::file_size(other_log));
+    EXPECT_EQ(manager_.get_last_disk_check().log_bytes, result.log_bytes);
+}
+
 TEST_F(LogManagerTest, NextLogNameStartsAtZero) { EXPECT_EQ(manager_.next_log_name("log_"), "log_0"); }
 
 TEST_F(LogManagerTest, NextLogNameFollowsTheHighestRunWhateverItsAge) {

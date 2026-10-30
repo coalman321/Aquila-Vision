@@ -296,6 +296,21 @@ void LoggerNode::handleSnapshotRequest(logging_msgs::srv::SnapshotRequest::Reque
             // snapshot exists, tell the caller
             resp->resp_code = resp->RESPONSE_SNAPSHOT_EXISTS;
             resp->response_msg = "Snapshot " + req->snapshot_name + " already exists";
+        } else if (req->time_before > 0.0) {
+            // A look-back snapshot: its window is already logged, so it is complete at once. Snapshot times are
+            // wall-clock epoch seconds, as recovery's are
+            bool success = snapshot_tracker_->capture_manual(req->snapshot_name, rclcpp::Clock(RCL_SYSTEM_TIME).now(),
+                                                             req->time_before, req->description, req->tags);
+            if (success) {
+                RCLCPP_INFO_STREAM(get_logger(), "Captured snapshot " << req->snapshot_name << " of the last "
+                                                                      << req->time_before << "s");
+                emitSnapshotManifest(req->snapshot_name);
+                resp->resp_code = resp->RESPONSE_OK;
+                resp->response_msg = "Snapshot " + req->snapshot_name + " captured";
+            } else {
+                resp->resp_code = resp->RESPONSE_REQ_INVALID;
+                resp->response_msg = "Failed to capture snapshot " + req->snapshot_name;
+            }
         } else {
             RCLCPP_INFO_STREAM(get_logger(), "Started snapshot " + req->snapshot_name);
 
@@ -325,6 +340,8 @@ void LoggerNode::handleSnapshotRequest(logging_msgs::srv::SnapshotRequest::Reque
                 resp->response_msg = "Failed to stop snapshot " + req->snapshot_name;
             }
         }
+    } else if (req->request_id == req->REQUEST_REMOVE) {
+        removeSnapshot(req->snapshot_name, *resp);
     } else if (req->request_id == req->REQUEST_NONE) {
         resp->resp_code = resp->RESPONSE_OK;
         resp->response_msg = "PONG";
@@ -332,6 +349,46 @@ void LoggerNode::handleSnapshotRequest(logging_msgs::srv::SnapshotRequest::Reque
         resp->resp_code = resp->RESPONSE_REQ_INVALID;
         resp->response_msg = "Request ID does not exist!";
     }
+}
+
+void LoggerNode::removeSnapshot(const std::string& snapshot_id,
+                                logging_msgs::srv::SnapshotRequest::Response& resp) {
+    // The ID names its manifest file, so one that could reach outside the manifest directory is never valid
+    if (!snapshot_tracker_->has_snapshot(snapshot_id) || snapshot_id.find('/') != std::string::npos) {
+        resp.resp_code = resp.RESPONSE_INVALID_NAME;
+        resp.response_msg = "Snapshot " + snapshot_id + " does not exist";
+        return;
+    }
+    if (snapshot_tracker_->is_running(snapshot_id)) {
+        resp.resp_code = resp.RESPONSE_SNAPSHOT_ACTIVE;
+        resp.response_msg = "Snapshot " + snapshot_id + " is still recording";
+        return;
+    }
+
+    // A manifest being processed is an upload in progress, and protects the snapshot's logs until it is done
+    std::filesystem::path manifest_path = manifest_dir_ / (snapshot_id + ".manifest");
+    if (std::filesystem::exists(manifest_dir_ / (snapshot_id + ".manifest.processing"))) {
+        resp.resp_code = resp.RESPONSE_SNAPSHOT_ACTIVE;
+        resp.response_msg = "Snapshot " + snapshot_id + " is being uploaded";
+        return;
+    }
+
+    if (!snapshot_tracker_->remove(snapshot_id)) {
+        resp.resp_code = resp.RESPONSE_REQ_INVALID;
+        resp.response_msg = "Failed to remove snapshot " + snapshot_id;
+        return;
+    }
+
+    // Its manifest protects the same span, so it goes too. The logs stay until rotation needs the space
+    std::error_code error;
+    std::filesystem::remove(manifest_path, error);
+    if (error) {
+        RCLCPP_WARN_STREAM(get_logger(), "Failed to remove manifest " << manifest_path << ": " << error.message());
+    }
+
+    RCLCPP_INFO_STREAM(get_logger(), "Removed snapshot " << snapshot_id);
+    resp.resp_code = resp.RESPONSE_OK;
+    resp.response_msg = "Snapshot " + snapshot_id + " removed; its logs are kept until rotation needs the space";
 }
 
 void LoggerNode::checkDiskUsage() {
@@ -421,6 +478,7 @@ logging_msgs::msg::LoggerStatus LoggerNode::buildStatus(const rclcpp::Time& now)
     status.snapshot_usage_threshold_percent = params_->snapshot_usage_threshold_percent;
     status.snapshot_usage_percent = disk.snapshot_usage_percent;
     status.snapshot_protected_bytes = disk.protected_bytes;
+    status.log_bytes = disk.log_bytes;
     std::error_code error;
     std::filesystem::space_info space = std::filesystem::space(params_->log_path, error);
     if (!error) {

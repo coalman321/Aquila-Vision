@@ -115,6 +115,9 @@ def generate_launch_description() -> list:
                     "log_split_time": 30,  # split logs every 30 seconds
                     "rotation_threshold_percent": 60.0, # Threshold to begin rotation (effective max disk usage)
                     "snapshot_usage_threshold_percent": 40.0,  # Threshold for snapshot disk usage before faulting
+                    # how often to rotate and re-measure the logs, which is how often the web UI's Logger tab
+                    # sees log and snapshot usage change (the default is 60 s)
+                    "disk_check_interval": 5.0,
 
                     # throttle is to log 1 in every N+1 messages. Set to 0 to log all messages
                     "topics": {

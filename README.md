@@ -60,6 +60,10 @@ roboRIO sends its match info (`ProxyServerThread.syncMatchData()`, called at mat
 raises a `match_start` event, which snapshots that match (5 s before to 2.5 min after). Snapshots are kept; once the disk
 is 60% full, the oldest other logs are deleted.
 
+The web UI's Logger tab shows how much of the disk snapshots and other logs fill, lists the snapshots, and can
+save the last 30 s to 5 min as a named snapshot, or remove a snapshot's protection so rotation can reclaim its
+logs.
+
 Copy them off with:
 
 ```

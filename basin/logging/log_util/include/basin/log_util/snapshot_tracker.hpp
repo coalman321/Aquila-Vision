@@ -45,6 +45,16 @@ class SnapshotTracker {
     /// @return false if no snapshot with this ID is running or it couldn't be saved
     bool stop_manual(const std::string& id);
 
+    /// @brief Creates a manual snapshot of the last time_before seconds, already complete
+    /// @param id The snapshot ID
+    /// @param now The current wall-clock time, which ends the snapshot
+    /// @param time_before Seconds before now to include
+    /// @param description The snapshot description
+    /// @param tags The snapshot tags
+    /// @return false if a snapshot with this ID already exists or it couldn't be saved
+    bool capture_manual(const std::string& id, const rclcpp::Time& now, double time_before,
+                        const std::string& description, const std::vector<std::string>& tags);
+
     /// @brief Starts an event snapshot covering [event_time - time_before, event_time + time_after]. It stays
     /// pending until finalize_due sees its window end
     /// @param event_name The event, which names the snapshot `event_<event_name>_<n>`
@@ -67,6 +77,10 @@ class SnapshotTracker {
     /// @param now The current time, which ends each snapshot
     /// @return The IDs of the snapshots it finalized
     std::vector<std::string> finalize_pending(const rclcpp::Time& now);
+
+    /// @brief Removes a complete snapshot, so its logs are no longer protected from rotation. The logs are kept
+    /// @return false if no snapshot with this ID exists, it is still running or pending, or it couldn't be saved
+    bool remove(const std::string& id);
 
     /// @brief Checks if a snapshot exists, running or complete
     bool has_snapshot(const std::string& id) const;

@@ -53,6 +53,9 @@ CameraWebNode::CameraWebNode(const rclcpp::NodeOptions& options) :
     // setup calibration handler
     calibration_handler_ = std::make_unique<calibration::CalibrationHandler>(web_node);
 
+    // setup continuous logger handler
+    logger_handler_ = std::make_unique<logger::LoggerHandler>(web_node);
+
     // setup launch handler
     launch_component_ = std::make_shared<basin::web_core::LaunchComponent>(web_node);
 

@@ -9,6 +9,7 @@
 #include "camera_webserver/calibration/calibration_handler.hpp"
 #include "camera_webserver/camera_web_params.hpp"
 #include "camera_webserver/field_map/field_map_handler.hpp"
+#include "camera_webserver/logger/logger_handler.hpp"
 #include "camera_webserver/pipelines/pipeline_handler.hpp"
 #include "camera_webserver/sources/source_base.hpp"
 #include "camera_webserver/sources/source_handler.hpp"
@@ -41,6 +42,9 @@ class CameraWebNode : public basin::web_core::WebNode {
 
     // calibration handler
     std::unique_ptr<calibration::CalibrationHandler> calibration_handler_;  ///< Camera calibration handler
+
+    // continuous logger handler
+    std::unique_ptr<logger::LoggerHandler> logger_handler_;  ///< Continuous logger status and snapshots
 
     // launch handler
     std::shared_ptr<basin::web_core::LaunchComponent> launch_component_;

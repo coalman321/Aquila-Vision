@@ -230,6 +230,30 @@ ros2 service call /log/snapshot logging_msgs/srv/SnapshotRequest \
   "{request_id: 2, snapshot_name: 'important_event'}"
 ```
 
+**Capture the last N seconds:**
+
+Set `time_before` on a start request to save the `time_before` seconds before the call as a snapshot that is
+complete straight away. There is nothing to stop. The camera web UI's Logger tab uses this.
+```bash
+ros2 service call /log/snapshot logging_msgs/srv/SnapshotRequest \
+  "{request_id: 1, snapshot_name: 'missed_shot', time_before: 60.0}"
+```
+It can only cover logs still on disk, so a window that reaches back past what rotation has already deleted
+starts at the oldest log that is left.
+
+**Remove a snapshot:**
+
+A complete snapshot can be removed, which takes away its protection without deleting anything: its entry in
+`snapshots.yaml` and its manifest in `pending/` go, and its MCAP files stay until rotation needs the space.
+Snapshots still recording, or whose manifest is being uploaded (`.manifest.processing`), are refused with
+`RESPONSE_SNAPSHOT_ACTIVE`. The camera web UI's Logger tab has a Remove button that does this.
+```bash
+ros2 service call /log/snapshot logging_msgs/srv/SnapshotRequest \
+  "{request_id: 3, snapshot_name: 'missed_shot'}"
+```
+Removing an event snapshot with the highest `<n>` for its event lets the next run reuse that ID, as the
+counters are re-seeded from the snapshots left.
+
 **Ping/Check:**
 ```bash
 ros2 service call /log/snapshot logging_msgs/srv/SnapshotRequest \
@@ -364,6 +388,7 @@ subscriber that joins late gets the latest one at once):
 | `log_path`, `disk_usage_percent`, `disk_total_bytes`, `disk_free_bytes` | The filesystem the log directory is on. The percentage is the one rotation compares against `disk_rotation_threshold_percent` |
 | `disk_rotation_threshold_percent` | The configured rotation limit, so a reader can tell how close rotation is |
 | `snapshot_usage_percent`, `snapshot_protected_bytes`, `snapshot_usage_threshold_percent` | How much of the disk snapshot-protected logs fill, as of the last disk check, and the limit at which the `disk_usage_high` fault is raised |
+| `log_bytes` | Bytes in all log files in the log directory, protected or not, as of the last disk check |
 | `events` | One entry per `event_snapshots.<key>` configuration: its name, window, tags, description and `trigger_count`, the number of snapshots it has triggered (counting earlier runs), which is also the `<n>` of its next `event_<name>_<n>` snapshot |
 | `snapshots` | Every snapshot that is running (manual, not yet stopped) or pending (an event snapshot inside its `time_after` window), then the 50 most recently started completed ones, each group newest first. Times are epoch seconds, and `end_time` is -1 until the snapshot has finished |
 | `total_snapshot_count` | How many snapshots exist in all, including those `snapshots` leaves out |

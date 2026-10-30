@@ -196,6 +196,7 @@ DiskCheckResult LogManager::check_disk(const std::string& active_log_file) {
     result.rotation_blocked = result.disk_usage_percent >= rotation_threshold_percent_;
 
     for (const auto& log_file : log_files_) {
+        result.log_bytes += log_file.size_bytes;
         if (log_file.associated_with_snapshot) {
             result.protected_bytes += log_file.size_bytes;
         }

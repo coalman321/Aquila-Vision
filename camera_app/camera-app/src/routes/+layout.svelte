@@ -12,6 +12,7 @@
 		{ name: 'Field Layout', href: `${base}/field-layout`, routeId: '/field-layout' },
 		{ name: 'Calibration', href: `${base}/calibration`, routeId: '/calibration' },
 		{ name: 'Models', href: `${base}/models`, routeId: '/models' },
+		{ name: 'Logger', href: `${base}/logger`, routeId: '/logger' },
 		{ name: 'Status', href: `${base}/status`, routeId: '/status' },
 	];
 

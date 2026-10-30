@@ -22,6 +22,8 @@ cc_ros_library(
     deps = [
         "//interfaces/calibration_msgs/msg:CamCalStatus",
         "//interfaces/calibration_msgs/srv:CamCalRequest",
+        "//interfaces/logging_msgs/msg:LoggerStatus",
+        "//interfaces/logging_msgs/srv:SnapshotRequest",
         "//interfaces/process_msgs/srv:RemoteRequest",
         "@geometry_msgs//msg:TransformStamped",
         "@sensor_msgs//msg:Image",

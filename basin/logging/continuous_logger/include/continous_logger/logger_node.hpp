@@ -83,6 +83,12 @@ class LoggerNode : public basin::node_core::NodeCore {
     void handleSnapshotRequest(logging_msgs::srv::SnapshotRequest::Request::SharedPtr req,
                                logging_msgs::srv::SnapshotRequest::Response::SharedPtr resp);
 
+    /// @brief Removes a complete snapshot and its manifest, so rotation may delete its logs once it needs the
+    /// space. Running and pending snapshots, and ones being uploaded, are refused
+    /// @param snapshot_id The ID of the snapshot to remove
+    /// @param resp The response to fill in
+    void removeSnapshot(const std::string& snapshot_id, logging_msgs::srv::SnapshotRequest::Response& resp);
+
     /// @brief Timer callback that has the log manager rotate the oldest unprotected logs and measure the disk, then
     /// reports what it found. While snapshot-protected logs fill at least snapshot_usage_threshold_percent of the
     /// disk it reports the fault `continuous_logger` / `disk_usage_high`. That fault expires after two check

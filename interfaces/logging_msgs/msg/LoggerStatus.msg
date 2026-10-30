@@ -17,6 +17,11 @@ float64 snapshot_usage_percent
 float64 snapshot_usage_threshold_percent
 uint64 snapshot_protected_bytes
 
+# Bytes in all the log files in the log directory, snapshot-protected or not, as of the last disk check.
+# Like snapshot_protected_bytes it counts the MCAP files rotation tracks, which leaves out one with no
+# messages yet.
+uint64 log_bytes
+
 # The events the logger is configured to snapshot on
 EventStatus[] events
 

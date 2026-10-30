@@ -76,6 +76,11 @@ class SnapshotWriter {
     /// @return true if stopped successfully, false if snapshot doesn't exist or isn't running
     bool stop_snapshot(const std::string& snapshot_id, int64_t end_time_override = -1);
 
+    /// @brief Removes a completed snapshot, so it no longer protects any logs. The logs themselves are kept
+    /// @param snapshot_id The ID of the snapshot to remove
+    /// @return true if removed and saved, false if the snapshot doesn't exist or is still running
+    bool remove_snapshot(const std::string& snapshot_id);
+
     /// @brief Checks if a snapshot exists (running or completed)
     /// @param snapshot_id The ID to check
     /// @return true if the snapshot exists
