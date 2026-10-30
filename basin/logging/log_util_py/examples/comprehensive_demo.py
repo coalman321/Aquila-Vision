@@ -168,7 +168,7 @@ def demo_log_manager(log_dir):
 
     manager = LogManager()
     manager.set_log_directory(log_dir)
-    manager.set_disk_limits(max_usage_percent=80.0, warning_threshold_percent=70.0)
+    manager.set_disk_limits(rotation_threshold_percent=80.0, snapshot_usage_threshold_percent=50.0)
 
     # Scan directory
     num_logs = manager.scan_log_directory()
@@ -180,8 +180,9 @@ def demo_log_manager(log_dir):
         usage = manager.get_disk_usage_percent()
         print(f'  Disk usage: {usage:.2f}%')
 
-        if manager.should_warn_disk_usage():
-            print('  ⚠ Warning: Disk usage exceeds warning threshold!')
+        disk = manager.get_last_disk_check()
+        if disk.snapshot_usage_high:
+            print(f'  ⚠ Warning: snapshots fill {disk.snapshot_usage_percent:.1f}% of the disk!')
     except Exception as e:
         print(f'  Could not get disk usage: {e}')
 

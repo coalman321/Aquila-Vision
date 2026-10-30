@@ -65,6 +65,8 @@ if command -v lsusb >/dev/null; then
 fi
 id aquila >/dev/null 2>&1 && ok "user aquila" || fail "user aquila (run setup-jetson.sh)"
 [ -w /etc/app ] || [ "$(stat -c %U /etc/app 2>/dev/null)" = aquila ] && ok "/etc/app" || fail "/etc/app not owned by aquila"
+[ "$(stat -c %U /var/lib/aquila/logs 2>/dev/null)" = aquila ] && ok "/var/lib/aquila/logs" \
+    || fail "/var/lib/aquila/logs not owned by aquila (run setup-jetson.sh)"
 
 if [ -n "$TREE" ]; then
     echo "Release $TREE"
@@ -104,6 +106,8 @@ if [ "$RUNNING" -eq 1 ]; then
     echo "Service"
     systemctl is-active --quiet aquila-vision && ok "aquila-vision is active" || fail "aquila-vision is not active"
     if curl -fsS -m 5 -o /dev/null http://localhost:5800/; then ok "web UI answers on :5800"; else fail "web UI does not answer on :5800"; fi
+    pgrep -u aquila -f continuous_logger_node >/dev/null && ok "continuous logger is running" \
+        || fail "continuous logger is not running (see /dev/shm/continuous_logger_node.out)"
 fi
 
 echo

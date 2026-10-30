@@ -14,6 +14,17 @@
 
 namespace basin::log_util {
 
+rosbag2_storage::StorageOptions make_mcap_storage_options(const std::string& directory, long split_time_s,
+                                                          long split_size_bytes) {
+    rosbag2_storage::StorageOptions options;
+    options.uri = directory;
+    options.max_bagfile_duration = split_time_s;
+    options.max_bagfile_size = split_size_bytes;
+    options.storage_id = "mcap";
+    options.storage_config_uri = "";
+    return options;
+}
+
 LogWriter::LogWriter() :
     is_open_(false),
     max_bagfile_duration_ns_(0),
@@ -204,6 +215,11 @@ void LogWriter::create_topic_internal(const std::string& topic_name, const std::
 std::string LogWriter::get_recording_directory() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return log_directory_;
+}
+
+std::string LogWriter::get_current_file_path() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return current_file_path_;
 }
 
 void LogWriter::force_split() {

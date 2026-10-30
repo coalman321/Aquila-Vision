@@ -80,8 +80,8 @@ cc_library(
     ],
 )
 
-# Wraps :pcap_recorder as a dlopen-able plugin, the same pattern as //basin/logging/continuous_logger's
-# :logger_component, so a //basin/core/node_core:basin_container config can load it with
+# Wraps :pcap_recorder as a dlopen-able plugin, matching how RCR handles ROS2 composable nodes (see
+# //basin/safety/BUILD.bazel), so a //basin/core/node_core:basin_container config can load it with
 # library_name basin::pcap_recorder::PcapRecorderNode / package_name pcap_recorder.
 cc_shared_library(
     name = "pcap_recorder_component",

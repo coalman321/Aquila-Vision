@@ -172,6 +172,16 @@ void ProxyClientNode::matchInfoCb(const v1::MatchInfo& msg) {
     meta_msg.yaml_metadata = emitter.c_str();
 
     log_metadata_pub_->publish(meta_msg);
+
+    // The roboRIO sends MatchInfo once, at match start, so it also marks the start of the match: a timed event,
+    // which triggers the continuous logger's `match_start` event snapshot (see daemon.prod.py)
+    logging_msgs::msg::LogMetadata start_msg;
+    start_msg.header.stamp = get_clock()->now();
+    start_msg.key_name = "match_start";
+    start_msg.timed_event = true;
+    start_msg.yaml_metadata = emitter.c_str();
+
+    log_metadata_pub_->publish(start_msg);
 }
 
 void ProxyClientNode::autosnapCb(const v1::AutoSnapshot& msg) {

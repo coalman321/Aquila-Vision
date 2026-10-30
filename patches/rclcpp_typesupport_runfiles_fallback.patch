@@ -1,0 +1,26 @@
+--- a/src/rclcpp/typesupport_helpers.cpp
++++ b/src/rclcpp/typesupport_helpers.cpp
+@@ -16,6 +16,7 @@
+ #include "rclcpp/typesupport_helpers.hpp"
+ 
+ #include <algorithm>
++#include <filesystem>
+ #include <functional>
+ #include <memory>
+ #include <sstream>
+@@ -215,11 +216,13 @@
+   std::string library_path = runfiles->Rlocation(
+     runfiles_prefix + "lib" + target_library + ext);
+ 
+-  if (library_path.empty()) {
++  // With a runfiles directory (no manifest) Rlocation doesn't check that the file exists, so a
++  // package built in the main repository (no `<package>+` repo) would never reach the fallback.
++  if (library_path.empty() || !std::filesystem::exists(library_path)) {
+     library_path = runfiles->Rlocation("_main/lib/lib" + target_library + ext);
+   }
+ 
+-  if (library_path.empty()) {
++  if (library_path.empty() || !std::filesystem::exists(library_path)) {
+     throw std::runtime_error(
+       "Typesupport library for " + target_library + " does not exist in runfiles.");
+   }

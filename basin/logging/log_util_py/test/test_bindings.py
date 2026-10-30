@@ -58,8 +58,21 @@ def test_log_manager_creation():
 def test_log_manager_disk_limits():
     """Test setting disk limits on LogManager."""
     manager = LogManager()
-    manager.set_disk_limits(80.0, 70.0)
+    manager.set_disk_limits(80.0, 50.0)
     # If no exception, test passes
+
+
+def test_log_manager_check_disk(tmp_path):
+    """check_disk on an empty directory rotates nothing and reports no protected logs."""
+    manager = LogManager()
+    manager.set_log_directory(str(tmp_path))
+    manager.set_disk_limits(100.0, 100.0)
+    disk = manager.check_disk()
+    assert disk.rotated_files == 0
+    assert disk.protected_bytes == 0
+    assert not disk.snapshot_usage_high
+    assert manager.get_last_disk_check().protected_bytes == 0
+    assert manager.next_log_name('log_') == 'log_0'
 
 
 def test_validate_invalid_directory():

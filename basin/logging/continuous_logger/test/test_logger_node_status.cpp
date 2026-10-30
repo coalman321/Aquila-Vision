@@ -29,9 +29,9 @@ constexpr auto TIMEOUT = 10s;
 /// /log/logger_status as the logger's snapshots change, and of /state/fault_report.
 class LoggerNodeStatusTest : public ::testing::Test {
    protected:
-    /// The disk warning threshold the logger runs with. What the disk really uses is up to the machine
-    /// the test runs on, so the fault tests pick a threshold no disk can be under (0) or over (100).
-    virtual double warningThresholdPercent() const { return 85.0; }
+    /// The snapshot usage threshold the logger runs with. How much of the disk snapshots fill is up to the machine
+    /// the test runs on, so the fault tests pick a threshold no usage can be under (0) or over (100).
+    virtual double snapshotThresholdPercent() const { return 85.0; }
 
     /// How often the logger checks the disk, which is how often it reports the disk fault. The default (60 s) is
     /// longer than a test can wait.
@@ -48,9 +48,9 @@ class LoggerNodeStatusTest : public ::testing::Test {
 
         rclcpp::NodeOptions options;
         options.append_parameter_override("log_path", log_dir_.string());
-        options.append_parameter_override("max_disk_usage_percent", 91.0);
+        options.append_parameter_override("rotation_threshold_percent", 91.0);
         options.append_parameter_override("disk_check_interval", DISK_CHECK_INTERVAL_S);
-        options.append_parameter_override("disk_warning_threshold_percent", warningThresholdPercent());
+        options.append_parameter_override("snapshot_usage_threshold_percent", snapshotThresholdPercent());
         options.append_parameter_override("event_snapshots.crash.event_name", std::string("crash"));
         options.append_parameter_override("event_snapshots.crash.time_before", 4.0);
         options.append_parameter_override("event_snapshots.crash.time_after", 1.5);
@@ -147,16 +147,16 @@ class LoggerNodeStatusTest : public ::testing::Test {
     std::vector<FaultReport> faults_;
 };
 
-/// A warning threshold every disk is at or above
+/// A snapshot usage threshold every disk is at or above
 class LoggerNodeDiskWarningTest : public LoggerNodeStatusTest {
    protected:
-    double warningThresholdPercent() const override { return 0.0; }
+    double snapshotThresholdPercent() const override { return 0.0; }
 };
 
-/// A warning threshold no disk is at or above
+/// A snapshot usage threshold no disk is at or above
 class LoggerNodeDiskOkTest : public LoggerNodeStatusTest {
    protected:
-    double warningThresholdPercent() const override { return 100.0; }
+    double snapshotThresholdPercent() const override { return 100.0; }
 };
 
 }  // namespace
@@ -165,8 +165,10 @@ TEST_F(LoggerNodeStatusTest, ReportsDiskAndConfiguredEvents) {
     spinUntilStatus([](const LoggerStatus&) { return true; });
 
     EXPECT_EQ(status_->log_path, log_dir_.string());
-    EXPECT_EQ(status_->disk_max_usage_percent, 91.0);
-    EXPECT_EQ(status_->disk_warning_threshold_percent, 85.0);
+    EXPECT_EQ(status_->disk_rotation_threshold_percent, 91.0);
+    EXPECT_EQ(status_->snapshot_usage_threshold_percent, 85.0);
+    EXPECT_GE(status_->snapshot_usage_percent, 0.0);
+    EXPECT_LT(status_->snapshot_usage_percent, 100.0);
     EXPECT_GT(status_->disk_total_bytes, 0u);
     EXPECT_LE(status_->disk_free_bytes, status_->disk_total_bytes);
     EXPECT_GT(status_->disk_usage_percent, 0.0);
@@ -206,7 +208,7 @@ TEST_F(LoggerNodeStatusTest, TracksAManualSnapshotFromStartToStop) {
     EXPECT_EQ(status_->total_snapshot_count, 1u);
 }
 
-TEST_F(LoggerNodeDiskWarningTest, RaisesAFaultWhileUsageIsAtTheWarningThreshold) {
+TEST_F(LoggerNodeDiskWarningTest, RaisesAFaultWhileSnapshotUsageIsAtTheThreshold) {
     auto deadline = std::chrono::steady_clock::now() + TIMEOUT;
     while (findFault("disk_usage_high") == nullptr && std::chrono::steady_clock::now() < deadline) {
         executor_->spin_some(50ms);
@@ -216,7 +218,7 @@ TEST_F(LoggerNodeDiskWarningTest, RaisesAFaultWhileUsageIsAtTheWarningThreshold)
 
     EXPECT_EQ(fault->key.fault_system, "continuous_logger");
     EXPECT_EQ(fault->source, "/logger");
-    EXPECT_NE(fault->fault_desc.find("warning threshold"), std::string::npos) << fault->fault_desc;
+    EXPECT_NE(fault->fault_desc.find("snapshot threshold"), std::string::npos) << fault->fault_desc;
 
     // It stays live for longer than one check interval, so a check that runs a little late doesn't let it lapse
     double live_for_s = (rclcpp::Time(fault->expiration_time) - rclcpp::Time(fault->raise_time)).seconds();
@@ -233,7 +235,7 @@ TEST_F(LoggerNodeDiskWarningTest, RaisesAFaultWhileUsageIsAtTheWarningThreshold)
     EXPECT_GE(reports, 3u);
 }
 
-TEST_F(LoggerNodeDiskOkTest, RaisesNoFaultBelowTheWarningThreshold) {
+TEST_F(LoggerNodeDiskOkTest, RaisesNoFaultBelowTheSnapshotThreshold) {
     spinUntilStatus([](const LoggerStatus&) { return true; });
     // Several checks' worth
     spinFor(1500ms);

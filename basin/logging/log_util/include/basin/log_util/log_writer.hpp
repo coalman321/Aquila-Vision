@@ -13,6 +13,13 @@
 
 namespace basin::log_util {
 
+/// @brief Storage options for an MCAP log written into `directory`
+/// @param directory The log directory; each split is a flat `<bag_name>_<split>.mcap` file inside it
+/// @param split_time_s Seconds of recording per split file
+/// @param split_size_bytes Largest size of a split file in bytes
+rosbag2_storage::StorageOptions make_mcap_storage_options(const std::string& directory, long split_time_s,
+                                                          long split_size_bytes);
+
 /// @brief Handles writing MCAP files to disk with time/size-based splitting
 ///
 /// This component manages the main log writer that handles writing MCAP files to disk.
@@ -63,6 +70,10 @@ class LogWriter {
     /// @brief Gets the current recording directory path
     /// @return The path to the current recording directory
     std::string get_recording_directory() const;
+
+    /// @brief Gets the on-disk path of the MCAP file currently being written
+    /// @return The path, or an empty string if the writer has never been opened
+    std::string get_current_file_path() const;
 
     /// @brief Forces an immediate split to a new MCAP file, closing and syncing the current one.
     /// Call this before emitting a snapshot manifest so all data is in a readable closed file.

@@ -52,6 +52,18 @@ bazel_dep(name = "rosidl_generator_py", version = "0.27.2-3.rcr.2")
 # rclcpp rcr.2 rather than "0.0.0":rosx_introspection rcr.2 includes rclcpp/version.h, which
 # rclcpp's rcr.1 overlay doesn't generate (same upstream 32.0.0-1 source, newer Bazel overlay).
 bazel_dep(name = "rclcpp", version = "32.0.0-1.rcr.2")
+
+# rclcpp looks up a message's typesupport library (for generic subscriptions, e.g. the continuous
+# logger's) at <package>+/<type>/ in the runfiles, then at _main/lib/. With a runfiles directory, as in
+# tests and the release tarball, the first lookup returns a path without checking it exists, so a
+# package built in this repository (localization_msgs, logging_msgs, ...) never reaches the second and
+# subscribing throws. The patch checks that the file is there.
+single_version_override(
+    module_name = "rclcpp",
+    patch_strip = 1,
+    patches = ["//patches:rclcpp_typesupport_runfiles_fallback.patch"],
+    version = "32.0.0-1.rcr.2",
+)
 bazel_dep(name = "rclpy", version = "0.0.0")
 
 # A real version rather than "0.0.0": foxglove_bridge's rcr.2 BUILD.bazel needs

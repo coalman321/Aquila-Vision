@@ -79,24 +79,39 @@ PYBIND11_MODULE(_log_util_py, m) {
             py::arg("log_directory"), py::arg("start_time"), py::arg("end_time"),
             "Finds all MCAP files in a directory that overlap with a time range");
 
+    // DiskCheckResult struct
+    py::class_<DiskCheckResult>(m, "DiskCheckResult")
+        .def(py::init<>())
+        .def_readwrite("rotated_files", &DiskCheckResult::rotated_files)
+        .def_readwrite("disk_usage_percent", &DiskCheckResult::disk_usage_percent)
+        .def_readwrite("rotation_blocked", &DiskCheckResult::rotation_blocked)
+        .def_readwrite("protected_bytes", &DiskCheckResult::protected_bytes)
+        .def_readwrite("snapshot_usage_percent", &DiskCheckResult::snapshot_usage_percent)
+        .def_readwrite("snapshot_usage_high", &DiskCheckResult::snapshot_usage_high);
+
     // LogManager class
     py::class_<LogManager>(m, "LogManager")
         .def(py::init<>())
         .def("set_log_directory", &LogManager::set_log_directory, py::arg("directory"),
              "Sets the log directory to manage")
-        .def("set_disk_limits", &LogManager::set_disk_limits, py::arg("max_usage_percent"),
-             py::arg("warning_threshold_percent"), "Sets disk usage limits (both values should be 0-100)")
+        .def("set_disk_limits", &LogManager::set_disk_limits, py::arg("rotation_threshold_percent"),
+             py::arg("snapshot_usage_threshold_percent"),
+             "Sets the rotation threshold and the snapshot usage threshold (both 0-100)")
+        .def("prepare_log_directory", &LogManager::prepare_log_directory,
+             "Creates the log directory if missing; raises if the path exists but is not a directory")
+        .def("next_log_name", &LogManager::next_log_name, py::arg("prefix"),
+             "Name for the next run's log: prefix plus one past the highest run number on disk")
         .def("scan_log_directory", &LogManager::scan_log_directory,
              "Scans the log directory for MCAP files and snapshots. Returns number of MCAP files found.")
-        .def("check_and_rotate_logs", &LogManager::check_and_rotate_logs,
-             "Checks disk usage and rotates old logs if needed. Returns True if rotation was performed.")
+        .def("check_disk", &LogManager::check_disk, py::arg("active_log_file") = "",
+             "Rescans, deletes the oldest unprotected logs until usage is under the rotation threshold (never "
+             "active_log_file), and returns a DiskCheckResult")
+        .def("get_last_disk_check", &LogManager::get_last_disk_check, "The result of the most recent check_disk")
         .def("get_log_files", &LogManager::get_log_files, "Gets the list of all MCAP file paths")
         .def("get_snapshot_log_files", &LogManager::get_snapshot_log_files, py::arg("snapshot_id"),
              "Gets MCAP files associated with a snapshot")
         .def("get_disk_usage_percent", &LogManager::get_disk_usage_percent,
              "Gets the current disk usage percentage (0-100)")
-        .def("should_warn_disk_usage", &LogManager::should_warn_disk_usage,
-             "Checks if a warning should be issued due to high disk usage")
         .def("get_snapshot_writer", &LogManager::get_snapshot_writer, py::return_value_policy::reference_internal,
              "Gets the snapshot writer for querying snapshots");
 }
