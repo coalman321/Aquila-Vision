@@ -176,14 +176,23 @@ net.ipv4.ipfrag_high_thresh = 134217728
 SYSCTL
 sysctl --system >/dev/null
 
-step "Installing aquila-runtime.service (power mode, clocks, fan, USB buffers)"
+step "Installing aquila-runtime.service (power mode, clocks, USB buffers) and the cool fan profile"
+# nvfancontrol owns the fan; jetson_clocks --fan would stop it and pin the PWM. Use its "cool" profile.
+if [ -f /etc/nvfancontrol.conf ]; then
+    sed -i 's/^\([[:space:]]*FAN_DEFAULT_PROFILE\)[[:space:]].*/\1 cool/' /etc/nvfancontrol.conf
+    systemctl restart nvfancontrol.service 2>/dev/null || true
+else
+    echo "    WARNING: /etc/nvfancontrol.conf not found; leaving the fan alone"
+fi
 # MAXN is the power mode with every CPU and GPU clock unlocked. Its ID differs between modules and
 # releases, so look it up rather than hard-coding it.
 MAXN_ID=$(awk '/^< *POWER_MODEL +ID=/ { id=$0; sub(/.*ID=/, "", id); sub(/ .*/, "", id) }
                /NAME=.*MAXN/ { print id; exit }' /etc/nvpmodel.conf 2>/dev/null || true)
 NVPMODEL_LINE=""
 if [ -n "$MAXN_ID" ]; then
-    NVPMODEL_LINE="ExecStart=/usr/sbin/nvpmodel -m ${MAXN_ID}"
+    # nvpmodel asks "REBOOT NOW?" when the mode needs one and fails on EOF; answer no (the mode applies at
+    # the next boot) and ignore its exit status so the lines after it still run.
+    NVPMODEL_LINE="ExecStart=-/bin/sh -c 'echo no | /usr/sbin/nvpmodel -m ${MAXN_ID}'"
 else
     echo "    WARNING: no MAXN power mode in /etc/nvpmodel.conf; leaving the power mode alone"
 fi
@@ -196,10 +205,10 @@ After=network.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStartPre=/bin/sleep 5
-${NVPMODEL_LINE}
 # 16 MB is too little for USB3 Vision streaming; MW-Lib's base_config.sh uses 64.
 ExecStart=/bin/sh -c 'echo 64 > /sys/module/usbcore/parameters/usbfs_memory_mb'
-ExecStart=/usr/bin/jetson_clocks --fan
+${NVPMODEL_LINE}
+ExecStart=/usr/bin/jetson_clocks
 
 [Install]
 WantedBy=multi-user.target

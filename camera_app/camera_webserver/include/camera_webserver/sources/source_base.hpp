@@ -116,6 +116,10 @@ struct VideoSourceConfig {
     /// @return true if active, false otherwise
     bool isActive() const { return source_connected && source_enabled; }
 
+    /// @brief Check if the source is enabled without a calibration file selected
+    /// @return true if the enabled source has no calibration, false otherwise
+    bool isMissingCalibration() const { return source_enabled && calibration_file.filename().empty(); }
+
     std::string getResolutionStr() const {
         return std::to_string(base_width / binning) + "x" + std::to_string(base_height / binning);
     }

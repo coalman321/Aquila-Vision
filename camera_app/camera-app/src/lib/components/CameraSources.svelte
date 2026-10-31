@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount } from "svelte";
+    import { fetchSourceSummaries, type SourceSummary } from "$lib/stores/sources";
 
     export let serverUrl: string = "http://localhost:8080";
     export let apiEndpoint: string = "/api/sources";
@@ -10,7 +11,7 @@
         camera_name: string;
     }
 
-    let sources: SourceKey[] = [];
+    let sources: SourceSummary[] = [];
     let selected: SourceKey | null = null;
     let loading = true;
     let saving = false;
@@ -18,6 +19,9 @@
     let _nextToastId = 1;
 
     let details: Record<string, any> | null = null;
+
+    // An enabled source without a calibration launches its pipeline with no intrinsics to solve tag poses from
+    $: missingCalibration = !!details?.source_enabled && !details?.calibration_file;
 
     function sanitizeForId(s: string) {
         return s ? String(s).replace(/[^a-zA-Z0-9_-]/g, "_") : "";
@@ -45,9 +49,7 @@
 
     async function fetchCameraList() {
         try {
-            const resp = await fetch(`${serverUrl}${apiEndpoint}`);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            sources = await resp.json();
+            sources = await fetchSourceSummaries(serverUrl, apiEndpoint);
             loading = false;
         } catch (err) {
             addToast(err instanceof Error ? err.message : "Unknown error");
@@ -118,7 +120,13 @@
                 },
             );
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            addToast("Saved", "success");
+            if (missingCalibration) {
+                addToast("Saved, but this enabled source has no calibration file", "warning");
+            } else {
+                addToast("Saved", "success");
+            }
+            // refresh the list so the source and tab warning icons match the saved config
+            await fetchCameraList();
         } catch (err) {
             addToast(err instanceof Error ? err.message : "Unknown error");
         } finally {
@@ -160,7 +168,15 @@
                             on:click={() => {
                                 selected = source;
                                 fetchCameraDetails(source);
-                            }}>{source.camera_name} <span class="camera-type">({source.camera_type})</span></button
+                            }}>{source.camera_name} <span class="camera-type">({source.camera_type})</span>
+                            {#if source.missing_calibration}
+                                <span
+                                    class="warning-icon"
+                                    title="Enabled with no calibration file selected"
+                                    aria-label="Warning: enabled with no calibration file selected"
+                                    role="img">⚠</span
+                                >
+                            {/if}</button
                         >
                     </div>
                 {/each}
@@ -266,6 +282,12 @@
                                             bind:value={details.calibration_file}
                                         />
                                     {/if}
+                                    {#if missingCalibration}
+                                        <div class="warning" role="status">
+                                            ⚠ This source is enabled but has no calibration file selected.
+                                            AprilTag poses need a calibration for this camera.
+                                        </div>
+                                    {/if}
                                 </td>
                             </tr>
                         </tbody>
@@ -358,6 +380,10 @@
         font-size: 0.85em;
         opacity: 0.7;
     }
+    .warning-icon {
+        margin-left: 4px;
+        color: #fbbf24;
+    }
     .camera-detail {
         flex: 1 1 auto;
         background: #222222;
@@ -442,6 +468,18 @@
     }
     .toast.success {
         background: #059669;
+    }
+    .toast.warning {
+        background: #d97706;
+    }
+    .warning {
+        margin-top: 6px;
+        padding: 6px 8px;
+        border: 1px solid #d97706;
+        border-radius: 4px;
+        background: rgba(217, 119, 6, 0.15);
+        color: #fbbf24;
+        font-size: 0.9rem;
     }
     .connected {
         color: #34d399;

@@ -12,6 +12,7 @@
   export let multiple = true;
   export let maxFileSizeMB = 20;
   export let hintText: string | undefined = undefined; // Optional: custom hint text shown in dropzone
+  export let width: string = '520px'; // CSS width of the uploader (e.g. '100%' to fill the container)
 
   const dispatch = createEventDispatcher();
   let inputEl: HTMLInputElement | null = null;
@@ -268,7 +269,7 @@
   });
 </script>
 
-<div class="file-uploader">
+<div class="file-uploader" style="width: {width}">
   <div
     class="dropzone"
     on:drop|preventDefault={handleDrop}
@@ -349,7 +350,7 @@
 </div>
 
 <style>
-  .file-uploader { width: 520px; font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
+  .file-uploader { box-sizing: border-box; font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
   .dropzone { border: 2px dashed var(--fw-border, #e5e7eb); background: var(--fw-bg, #fff); padding: 18px; cursor: pointer; border-radius: 8px; }
   .dropzone:hover { background: var(--fw-bg-hover, #f7fafc); }
   .drop-inner { text-align: center; color: var(--fw-text, #111827); }

@@ -55,7 +55,7 @@ def create_pipeline(filename: os.PathLike, source_config: dict) -> list:
                         "gain_auto": False,
                         "gain": pipeline_config.get("gain", 0.0),
                         "exposure": pipeline_config.get("exposure", 1000.0),
-                        "image_encoding": "rgb8",
+                        "image_encoding": source_config.get("image_encoding", "mono8"),
                         "frame_rate": float(source_config.get("frame_rate", 30.0)),
                         "shutter_mode": "global",
                         "binning_x": source_config.get("binning", 1),

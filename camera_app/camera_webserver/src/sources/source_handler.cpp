@@ -54,8 +54,10 @@ CameraSourceHandler::CameraSourceHandler(std::shared_ptr<basin::web_core::WebNod
         auto sources = listSources();
 
         json j_sources = json::array();
-        for (const auto& [key, _] : sources_) {
-            j_sources.push_back(key.toJson());
+        for (const auto& [key, source] : sources_) {
+            json j_source = key.toJson();
+            j_source["missing_calibration"] = source.isMissingCalibration();
+            j_sources.push_back(j_source);
         }
 
         res.status = 200;
