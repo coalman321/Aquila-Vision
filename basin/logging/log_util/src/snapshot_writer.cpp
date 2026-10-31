@@ -78,6 +78,18 @@ bool SnapshotWriter::stop_snapshot(const std::string& snapshot_id, int64_t end_t
     return save_to_file();
 }
 
+bool SnapshotWriter::remove_snapshot(const std::string& snapshot_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = snapshots_.find(snapshot_id);
+    if (it == snapshots_.end() || it->second.end_time == -1) {
+        return false;
+    }
+
+    snapshots_.erase(it);
+    return save_to_file();
+}
+
 bool SnapshotWriter::has_snapshot(const std::string& snapshot_id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     return snapshots_.find(snapshot_id) != snapshots_.end();

@@ -27,6 +27,9 @@ struct DiskCheckResult {
     ///< Bytes in log files that a snapshot (running or complete) or a pending manifest protects
     uintmax_t protected_bytes{ 0 };
 
+    ///< Bytes in all log files, protected or not
+    uintmax_t log_bytes{ 0 };
+
     ///< protected_bytes as a percentage of the filesystem's capacity (0-100)
     double snapshot_usage_percent{ 0.0 };
 

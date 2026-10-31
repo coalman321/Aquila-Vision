@@ -87,6 +87,7 @@ void LogWriter::open(const rosbag2_storage::StorageOptions& storage_options,
 
     is_open_ = true;
     created_topics_.clear();
+    topic_definitions_.clear();
     current_file_open_time_ns_ =
         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
@@ -112,6 +113,7 @@ void LogWriter::close() {
 
     is_open_ = false;
     created_topics_.clear();
+    topic_definitions_.clear();
 }
 
 bool LogWriter::is_open() const {
@@ -127,18 +129,7 @@ void LogWriter::write(std::shared_ptr<const rclcpp::SerializedMessage> message, 
         throw std::runtime_error("LogWriter is not open");
     }
 
-    if (created_topics_.find(topic_name) == created_topics_.end()) {
-        rosbag2_storage::TopicMetadata topic_metadata;
-        topic_metadata.name = topic_name;
-        topic_metadata.type = type_name;
-        topic_metadata.serialization_format = rmw_get_serialization_format();
-
-        rosbag2_storage::MessageDefinition message_def;
-        message_def.topic_type = type_name;
-        storage_->create_topic(topic_metadata, message_def);
-        metadata_.topics_with_message_count.push_back({ topic_metadata, 0 });
-        created_topics_.insert(topic_name);
-    }
+    create_topic_internal(topic_name, type_name, rmw_get_serialization_format());
 
     auto bag_message = std::make_shared<rosbag2_storage::SerializedBagMessage>();
     bag_message->topic_name = topic_name;
@@ -203,13 +194,25 @@ void LogWriter::create_topic_internal(const std::string& topic_name, const std::
     topic_metadata.type = type_name;
     topic_metadata.serialization_format = serialization_format;
 
-    rosbag2_storage::MessageDefinition message_def;
-    message_def.topic_type = type_name;
-
+    auto message_def = lookup_message_definition(topic_name, type_name);
     storage_->create_topic(topic_metadata, message_def);
 
     metadata_.topics_with_message_count.push_back({ topic_metadata, 0 });
+    topic_definitions_[topic_name] = message_def;
     created_topics_.insert(topic_name);
+}
+
+rosbag2_storage::MessageDefinition LogWriter::lookup_message_definition(const std::string& topic_name,
+                                                                        const std::string& type_name) {
+    auto definition = message_definitions_.get_full_text_ext(type_name, topic_name);
+    if (definition.encoded_message_definition.empty() || definition.encoding.empty() ||
+        definition.encoding == "unknown") {
+        RCLCPP_WARN(rclcpp::get_logger("log_writer"),
+                    "Message definition for type '%s' (topic '%s') not found; its MCAP schema will be empty",
+                    type_name.c_str(), topic_name.c_str());
+        definition = rosbag2_storage::MessageDefinition::empty_message_definition_for(type_name);
+    }
+    return definition;
 }
 
 std::string LogWriter::get_recording_directory() const {
@@ -315,9 +318,7 @@ void LogWriter::do_split_unlocked() {
     for (const auto& topic_name : topics_to_recreate) {
         for (const auto& topic_with_count : metadata_.topics_with_message_count) {
             if (topic_with_count.topic_metadata.name == topic_name) {
-                rosbag2_storage::MessageDefinition message_def;
-                message_def.topic_type = topic_with_count.topic_metadata.type;
-                storage_->create_topic(topic_with_count.topic_metadata, message_def);
+                storage_->create_topic(topic_with_count.topic_metadata, topic_definitions_.at(topic_name));
                 created_topics_.insert(topic_name);
                 break;
             }

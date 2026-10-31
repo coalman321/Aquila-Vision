@@ -68,10 +68,13 @@ cc_library(
 # Publishes the `continuous_logger` ament package. `libraries` publishes the message typesupport
 # libraries into lib/, which is on LD_LIBRARY_PATH (see .bazelrc), so rclcpp's generic
 # subscriptions can load them. See the matching comment in //basin/launch/core/BUILD.bazel.
+# `deps` brings the `.msg` text of every interface the system publishes, which the log writer
+# embeds as each topic's MCAP schema (see //interfaces:all_definitions).
 ament_index(
     name = "ament_index",
     export_name = "continuous_logger",
     libraries = ["//basin/logging/log_util:logging_msgs"],
+    deps = ["//interfaces:all_definitions"],
 )
 
 # The logger, a plain node run as its own process from src/logger_main.cpp. //deploy ships this

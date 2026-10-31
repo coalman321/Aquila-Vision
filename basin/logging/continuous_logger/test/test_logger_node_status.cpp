@@ -115,16 +115,18 @@ class LoggerNodeStatusTest : public ::testing::Test {
         return nullptr;
     }
 
-    void callSnapshotService(uint8_t request_id, const std::string& name) {
+    void callSnapshotService(uint8_t request_id, const std::string& name, double time_before = 0.0,
+                             uint8_t expected_code = SnapshotRequest::Response::RESPONSE_OK) {
         ASSERT_TRUE(client_->wait_for_service(TIMEOUT));
         auto request = std::make_shared<SnapshotRequest::Request>();
         request->request_id = request_id;
         request->snapshot_name = name;
         request->description = "made by the test";
         request->tags = { "t" };
+        request->time_before = time_before;
         auto future = client_->async_send_request(request);
         ASSERT_EQ(executor_->spin_until_future_complete(future, TIMEOUT), rclcpp::FutureReturnCode::SUCCESS);
-        ASSERT_EQ(future.get()->resp_code, SnapshotRequest::Response::RESPONSE_OK);
+        ASSERT_EQ(future.get()->resp_code, expected_code);
     }
 
     static const SnapshotStatus* find(const LoggerStatus& status, const std::string& id) {
@@ -205,6 +207,49 @@ TEST_F(LoggerNodeStatusTest, TracksAManualSnapshotFromStartToStop) {
         return snapshot != nullptr && snapshot->state == SnapshotStatus::STATE_COMPLETE;
     });
     EXPECT_NE(find(*status_, "probe_snap")->end_time, -1);
+    EXPECT_EQ(status_->total_snapshot_count, 1u);
+}
+
+TEST_F(LoggerNodeStatusTest, CapturesTheLastSecondsAsACompleteSnapshot) {
+    spinUntilStatus([](const LoggerStatus&) { return true; });
+
+    int64_t before_call = std::chrono::duration_cast<std::chrono::seconds>(
+                              std::chrono::system_clock::now().time_since_epoch())
+                              .count();
+    callSnapshotService(SnapshotRequest::Request::REQUEST_START, "look_back", 60.0);
+    spinUntilStatus([](const LoggerStatus& status) { return find(status, "look_back") != nullptr; });
+
+    const SnapshotStatus* snapshot = find(*status_, "look_back");
+    EXPECT_EQ(snapshot->state, SnapshotStatus::STATE_COMPLETE);
+    EXPECT_EQ(snapshot->trigger, "manual");
+    EXPECT_GE(snapshot->end_time, before_call);
+    EXPECT_NEAR(static_cast<double>(snapshot->end_time - snapshot->start_time), 60.0, 1.0);
+    EXPECT_TRUE(std::filesystem::exists(log_dir_ / "pending" / "look_back.manifest"));
+
+    // The name is taken now, whichever way it is asked for again
+    callSnapshotService(SnapshotRequest::Request::REQUEST_START, "look_back", 60.0,
+                        SnapshotRequest::Response::RESPONSE_SNAPSHOT_EXISTS);
+    callSnapshotService(SnapshotRequest::Request::REQUEST_STOP, "look_back", 0.0,
+                        SnapshotRequest::Response::RESPONSE_INVALID_NAME);
+}
+
+TEST_F(LoggerNodeStatusTest, RemovesACompleteSnapshotAndItsManifest) {
+    spinUntilStatus([](const LoggerStatus&) { return true; });
+
+    callSnapshotService(SnapshotRequest::Request::REQUEST_START, "to_remove", 30.0);
+    callSnapshotService(SnapshotRequest::Request::REQUEST_START, "still_running");
+    ASSERT_TRUE(std::filesystem::exists(log_dir_ / "pending" / "to_remove.manifest"));
+
+    callSnapshotService(SnapshotRequest::Request::REQUEST_REMOVE, "still_running", 0.0,
+                        SnapshotRequest::Response::RESPONSE_SNAPSHOT_ACTIVE);
+    callSnapshotService(SnapshotRequest::Request::REQUEST_REMOVE, "missing", 0.0,
+                        SnapshotRequest::Response::RESPONSE_INVALID_NAME);
+    callSnapshotService(SnapshotRequest::Request::REQUEST_REMOVE, "to_remove");
+
+    spinUntilStatus([](const LoggerStatus& status) {
+        return find(status, "to_remove") == nullptr && find(status, "still_running") != nullptr;
+    });
+    EXPECT_FALSE(std::filesystem::exists(log_dir_ / "pending" / "to_remove.manifest"));
     EXPECT_EQ(status_->total_snapshot_count, 1u);
 }
 

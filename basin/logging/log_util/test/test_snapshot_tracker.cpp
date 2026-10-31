@@ -142,3 +142,45 @@ TEST_F(SnapshotTrackerTest, RejectsDuplicateAndUnknownManualSnapshots) {
     ASSERT_TRUE(tracker->stop_manual("snap"));
     EXPECT_FALSE(tracker->stop_manual("snap"));
 }
+
+TEST_F(SnapshotTrackerTest, CapturesALookBackWindowAlreadyComplete) {
+    {
+        auto tracker = makeTracker();
+        ASSERT_TRUE(tracker->capture_manual("look_back", at(1000.5), 30.0, "by hand", { "t" }));
+
+        EXPECT_FALSE(tracker->is_running("look_back"));
+        EXPECT_TRUE(readWal().open_snapshots.empty());
+        EXPECT_FALSE(tracker->capture_manual("look_back", at(2000), 30.0, "", {}));
+        EXPECT_FALSE(tracker->stop_manual("look_back"));
+    }
+
+    // It is in snapshots.yaml, so the next run sees it as it was
+    auto next_run = makeTracker();
+    EXPECT_TRUE(next_run->recover(at(3000)).empty());
+    auto snapshot = next_run->get_snapshot("look_back");
+    EXPECT_EQ(snapshot.start_time, 970);
+    EXPECT_EQ(snapshot.end_time, 1000);
+    EXPECT_EQ(snapshot.trigger, "manual");
+    EXPECT_EQ(snapshot.description, "by hand");
+    EXPECT_EQ(snapshot.tags, std::vector<std::string>{ "t" });
+}
+
+TEST_F(SnapshotTrackerTest, RemovesOnlyCompleteSnapshots) {
+    {
+        auto tracker = makeTracker();
+        ASSERT_TRUE(tracker->capture_manual("done", at(1000), 30.0, "", {}));
+        ASSERT_TRUE(tracker->start_manual("running", "", {}));
+        std::string pending = tracker->start_event("crash", at(1000), 1.0, 100.0, "", {});
+
+        EXPECT_FALSE(tracker->remove("missing"));
+        EXPECT_FALSE(tracker->remove("running"));
+        EXPECT_FALSE(tracker->remove(pending));
+        EXPECT_TRUE(tracker->remove("done"));
+        EXPECT_FALSE(tracker->has_snapshot("done"));
+        EXPECT_TRUE(tracker->has_snapshot("running"));
+    }
+
+    // The removal is in snapshots.yaml, so the next run doesn't see it
+    auto next_run = makeTracker();
+    EXPECT_FALSE(next_run->has_snapshot("done"));
+}

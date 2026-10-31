@@ -74,6 +74,25 @@ bool SnapshotTracker::stop_manual(const std::string& id) {
     return true;
 }
 
+bool SnapshotTracker::capture_manual(const std::string& id, const rclcpp::Time& now, double time_before,
+                                     const std::string& description, const std::vector<std::string>& tags) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Its window is already on disk, so it never runs and the WAL is left as it is
+    int64_t now_ns = now.nanoseconds();
+    int64_t start_time_sec = toSeconds(now_ns - static_cast<int64_t>(std::llround(time_before * NS_PER_S)));
+    if (!writer_.start_snapshot(id, MANUAL_TRIGGER, description, tags, start_time_sec)) {
+        return false;
+    }
+    return writer_.stop_snapshot(id, toSeconds(now_ns));
+}
+
+bool SnapshotTracker::remove(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Only complete snapshots, which the WAL never lists, so it is left as it is
+    return writer_.remove_snapshot(id);
+}
+
 std::string SnapshotTracker::start_event(const std::string& event_name, const rclcpp::Time& event_time,
                                          double time_before, double time_after, const std::string& description,
                                          const std::vector<std::string>& tags) {

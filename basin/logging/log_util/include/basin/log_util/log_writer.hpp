@@ -4,7 +4,10 @@
 #include <memory>
 #include <mutex>
 #include <rclcpp/rclcpp.hpp>
+#include <map>
 #include <rosbag2_cpp/converter_options.hpp>
+#include <rosbag2_cpp/message_definitions/local_message_definition_source.hpp>
+#include <rosbag2_storage/message_definition.hpp>
 #include <rosbag2_storage/storage_factory.hpp>
 #include <rosbag2_storage/storage_interfaces/read_write_interface.hpp>
 #include <rosbag2_storage/storage_options.hpp>
@@ -92,6 +95,11 @@ class LogWriter {
     void create_topic_internal(const std::string& topic_name, const std::string& type_name,
                                const std::string& serialization_format);
 
+    // Full `.msg` text for a type (encoding "ros2msg"), so MCAP schemas are self-describing for
+    // readers like Foxglove. Falls back to an empty definition if the type isn't in the ament index.
+    rosbag2_storage::MessageDefinition lookup_message_definition(const std::string& topic_name,
+                                                                 const std::string& type_name);
+
     mutable std::mutex mutex_;
     std::shared_ptr<rosbag2_storage::storage_interfaces::ReadWriteInterface> storage_;
     rosbag2_storage::StorageFactory storage_factory_;
@@ -100,6 +108,8 @@ class LogWriter {
     std::string current_file_path_;  // actual on-disk path of the currently-open MCAP file
     bool is_open_;
     std::set<std::string> created_topics_;
+    rosbag2_cpp::LocalMessageDefinitionSource message_definitions_;
+    std::map<std::string, rosbag2_storage::MessageDefinition> topic_definitions_;  // topic -> definition
 
     // Split management
     uint64_t max_bagfile_duration_ns_;

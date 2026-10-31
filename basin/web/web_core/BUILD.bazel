@@ -129,6 +129,16 @@ cc_library(
     ],
 )
 
+# A ZIP archive of stored (uncompressed) entries, laid out up front so its exact size is known and
+# read back by offset: for streaming large files, such as logs, from a route through
+# httplib::Response::set_content_provider. Plain C++, no ROS.
+cc_library(
+    name = "zip_stream",
+    srcs = ["src/zip_stream.cpp"],
+    hdrs = ["include/basin/web_core/zip_stream.hpp"],
+    includes = ["include"],
+)
+
 # A WebNode with just a file-upload route on /upload (files land in /tmp/uploads):
 # `bazel run //basin/web/web_core:web_core_node`. Not a component, unlike SafetyAggNode and
 # friends -- it has its own main().
@@ -148,6 +158,17 @@ cc_binary(
 
 # test_json_serialization.cpp has no main() of its own, so it needs gtest_main -- pulled in by the
 # "@rosdistro//cc:googletest" wrapper.
+# Checks the archives with Python's zipfile and unzip, when they are on the PATH.
+cc_test(
+    name = "zip_stream_test",
+    size = "small",
+    srcs = ["test/test_zip_stream.cpp"],
+    deps = [
+        ":zip_stream",
+        "@rosdistro//cc:googletest",
+    ],
+)
+
 cc_test(
     name = "json_serialization_test",
     size = "small",

@@ -22,6 +22,8 @@ cc_ros_library(
     deps = [
         "//interfaces/calibration_msgs/msg:CamCalStatus",
         "//interfaces/calibration_msgs/srv:CamCalRequest",
+        "//interfaces/logging_msgs/msg:LoggerStatus",
+        "//interfaces/logging_msgs/srv:SnapshotRequest",
         "//interfaces/process_msgs/srv:RemoteRequest",
         "@geometry_msgs//msg:TransformStamped",
         "@sensor_msgs//msg:Image",
@@ -39,6 +41,9 @@ DYNAMIC_DEPENDENCIES = {
     "@tf2//:tf2": "@tf2//:tf2_library",
     "@tf2_geometry_msgs//:tf2_geometry_msgs": "@tf2_geometry_msgs//:tf2_geometry_msgs_library",
     "@tf2_ros//:tf2_ros": "@tf2_ros//:tf2_ros_library",
+    # The MCAP storage plugin, which //basin/logging/log_util's LogManager reads log time ranges through
+    # when the Logger tab downloads a snapshot (see //basin/logging/continuous_logger/BUILD.bazel)
+    "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins": "@rosbag2_storage_default_plugins//:rosbag2_storage_default_plugins_library",
 }
 
 collect_transitive_dynamic_deps(
@@ -54,13 +59,16 @@ cc_library(
     deps = DYNAMIC_DEPENDENCIES.values() + [
         ":camera_webserver_msgs",
         "//basin/core/node_core",
+        "//basin/logging/log_util",
         "//basin/web/web_core",
         "//basin/web/web_core:file_manager_component",
         "//basin/web/web_core:jsonable",
         "//basin/web/web_core:launch_component",
         "//basin/web/web_core:static_server_component",
+        "//basin/web/web_core:zip_stream",
         "@aravis",
         "@nlohmann_json//:json",
+        "@rosdistro//cc:yaml-cpp_library",
     ],
 )
 
@@ -102,13 +110,20 @@ ament_index(
         ":static_content",
         # The camera driver launch/application.prod.py starts for each camera source.
         "//drivers/basler_driver:ament_index",
+        # Message definitions, so bags cut by snapshot extraction keep full MCAP schemas.
+        "//interfaces:all_definitions",
     ],
 )
 
 cc_binary(
     name = "camera_web",
     srcs = ["src/camera_web_main.cc"],
-    data = [":ament_index"],
+    # The rosbag2 indexes let the storage plugin be found at runtime, as for //basin/logging/continuous_logger:logger_node
+    data = [
+        ":ament_index",
+        "@rosbag2_cpp//:ament_index",
+        "@rosbag2_storage//:ament_index",
+    ],
     dynamic_deps = select({
         ":dynamic_mode_off": [],
         ":rmw_dynamic": [":transitive_dynamic_deps"],

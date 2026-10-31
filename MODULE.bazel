@@ -108,6 +108,10 @@ bazel_dep(name = "tf2_ros", version = "0.45.7-3.rcr.1")
 # tf2 above; not transitively pulled in by ros_core.
 bazel_dep(name = "tf2_geometry_msgs", version = "0.45.7-3.rcr.1")
 
+# Already in the graph through tf2_ros; named here so //interfaces:all_definitions can give /tf and
+# /tf_static (tf2_msgs/msg/TFMessage) a full MCAP schema in the logger's bags.
+bazel_dep(name = "tf2_msgs", version = "0.45.7-3.rcr.1")
+
 # Referenced by //perception/apriltag_detector/landmark_detector_ros: its camera subscription and
 # debug image publisher (image_transport), the mono8/bgr8 conversions to OpenCV (cv_bridge) and its
 # Detection3DArray output (vision_msgs). None is transitively pulled in by ros_core.

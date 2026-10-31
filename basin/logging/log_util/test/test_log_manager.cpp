@@ -6,6 +6,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <vector>
 
 #include "basin/log_util/log_manager.hpp"
 #include "basin/log_util/log_writer.hpp"
@@ -121,6 +122,32 @@ TEST_F(LogManagerTest, ProtectsALogEndingPartWayIntoASnapshotsFirstSecond) {
     EXPECT_TRUE(std::filesystem::exists(log));
 }
 
+TEST_F(LogManagerTest, MatchesSnapshotsToALogsTimeRangeWidenedToWholeSeconds) {
+    // Read from the log's summary as [2000, 2006]
+    auto log = writeLog("log_0", 2000.6, 2005.5, 100);
+    addSnapshot("ends_before", 1990, 1999);
+    addSnapshot("ends_at_start", 1990, 2000);
+    addSnapshot("starts_at_end", 2006, 2010);
+    addSnapshot("starts_after", 2007, 2010);
+    manager_.scan_log_directory();
+
+    EXPECT_TRUE(manager_.get_snapshot_log_files("ends_before").empty());
+    EXPECT_EQ(manager_.get_snapshot_log_files("ends_at_start"), std::vector<std::string>{ log.string() });
+    EXPECT_EQ(manager_.get_snapshot_log_files("starts_at_end"), std::vector<std::string>{ log.string() });
+    EXPECT_TRUE(manager_.get_snapshot_log_files("starts_after").empty());
+}
+
+TEST_F(LogManagerTest, StillReadsALogCutOffBeforeItsSummary) {
+    // As a crash or power loss leaves the log being written: no summary to read the time range from, so it is
+    // read the slow way, by scanning the file
+    auto log = writeLog("log_0", 2000.0, 2005.0, 100);
+    std::filesystem::resize_file(log, std::filesystem::file_size(log) - 64);
+    addSnapshot("snap", 1990, 2010);
+
+    EXPECT_EQ(manager_.scan_log_directory(), 1u);
+    EXPECT_EQ(manager_.get_snapshot_log_files("snap"), std::vector<std::string>{ log.string() });
+}
+
 TEST_F(LogManagerTest, NeverRotatesTheActiveLog) {
     auto oldest = writeLog("log_0", 1000, 1010, 200);
     auto active = writeLog("log_1", 2000, 2010, 100);
@@ -147,6 +174,34 @@ TEST_F(LogManagerTest, ReportsSnapshotUsageAgainstItsThreshold) {
 
     manager_.set_disk_limits(100.0, 100.0);
     EXPECT_FALSE(manager_.check_disk("").snapshot_usage_high);
+}
+
+TEST_F(LogManagerTest, ARemovedSnapshotNoLongerProtectsItsLogs) {
+    auto log = writeLog("log_0", 2000, 2010, 100);
+    addSnapshot("snap", 2000, 2010);
+    manager_.set_disk_limits(100.0, 100.0);
+    ASSERT_EQ(manager_.check_disk("").protected_bytes, std::filesystem::file_size(log));
+
+    SnapshotWriter snapshots;
+    snapshots.set_recording_directory(dir_.string());
+    snapshots.load_from_file();
+    ASSERT_TRUE(snapshots.remove_snapshot("snap"));
+
+    EXPECT_EQ(manager_.check_disk("").protected_bytes, 0u);
+    EXPECT_TRUE(std::filesystem::exists(log));
+}
+
+TEST_F(LogManagerTest, ReportsTheBytesOfEveryLog) {
+    auto protected_log = writeLog("log_0", 2000, 2010, 100);
+    auto other_log = writeLog("log_1", 3000, 3010, 300);
+    addSnapshot("snap", 2000, 2010);
+    manager_.set_disk_limits(100.0, 100.0);
+
+    DiskCheckResult result = manager_.check_disk("");
+
+    EXPECT_EQ(result.protected_bytes, std::filesystem::file_size(protected_log));
+    EXPECT_EQ(result.log_bytes, std::filesystem::file_size(protected_log) + std::filesystem::file_size(other_log));
+    EXPECT_EQ(manager_.get_last_disk_check().log_bytes, result.log_bytes);
 }
 
 TEST_F(LogManagerTest, NextLogNameStartsAtZero) { EXPECT_EQ(manager_.next_log_name("log_"), "log_0"); }
