@@ -113,7 +113,8 @@ ZipStream::~ZipStream() {
     }
 }
 
-void ZipStream::addFile(const std::string& name, const std::filesystem::path& path) {
+void ZipStream::addFile(const std::string& name, const std::filesystem::path& path,
+                        const std::function<void(uint64_t)>& on_read) {
     Entry entry;
     entry.name = name;
     entry.fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -135,6 +136,9 @@ void ZipStream::addFile(const std::string& name, const std::filesystem::path& pa
             preadFully(entry.fd, buffer.data(), n, offset);
             entry.crc = crc32Update(entry.crc, buffer.data(), n);
             offset += n;
+            if (on_read) {
+                on_read(n);
+            }
         }
     } catch (const std::runtime_error& e) {
         ::close(entry.fd);

@@ -173,24 +173,127 @@
     429: "Too many downloads in progress; try again once one finishes.",
   };
 
+  // Downloads in progress, by snapshot ID, as the server reports them
+  interface DownloadState {
+    phase: "checking" | "starting" | "preparing" | "sending" | "done";
+    done_bytes: number;
+    total_bytes: number;
+  }
+  let downloads: Record<string, DownloadState> = {};
+  const DOWNLOAD_POLL_MS = 500;
+  // How long the server may take to start a download before the page stops watching
+  const DOWNLOAD_START_TIMEOUT_MS = 30000;
+
+  function setDownload(id: string, state: DownloadState | null) {
+    const next = { ...downloads };
+    if (state) next[id] = state;
+    else delete next[id];
+    downloads = next;
+  }
+
+  function downloadLabel(state: DownloadState): string {
+    const percent = state.total_bytes > 0 ? Math.floor((state.done_bytes / state.total_bytes) * 100) : 0;
+    switch (state.phase) {
+      case "checking":
+        return "Checking…";
+      case "starting":
+        return "Starting…";
+      case "preparing":
+        return `Preparing ${percent}%`;
+      case "sending":
+        return `Downloading ${percent}%`;
+      case "done":
+        return "Downloaded";
+    }
+  }
+
+  function downloadTitle(state: DownloadState): string {
+    switch (state.phase) {
+      case "preparing":
+        return `Checksumming the logs before sending: ${formatBytes(state.done_bytes)} of ${formatBytes(state.total_bytes)}`;
+      case "sending":
+        return `Sent ${formatBytes(state.done_bytes)} of ${formatBytes(state.total_bytes)}`;
+      default:
+        return "";
+    }
+  }
+
+  // A token for the server to file the download's progress under; crypto.randomUUID needs HTTPS
+  function progressToken(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Stops watching downloads once the page is left; the browser's downloads carry on
+  let destroyed = false;
+
   async function handleDownload(snap: Snapshot) {
     const url = `${base()}/api/logger/snapshot/download?id=${encodeURIComponent(snap.id)}`;
+    setDownload(snap.id, { phase: "checking", done_bytes: 0, total_bytes: 0 });
     // Check first, so a failure shows here rather than as a broken download in the browser
     try {
       const res = await fetch(url, { method: "HEAD" });
       if (!res.ok) {
         addToast(downloadErrors[res.status] ?? `Download failed: HTTP ${res.status}`, "error");
+        setDownload(snap.id, null);
         return;
       }
     } catch (e) {
       addToast(e instanceof Error ? e.message : String(e), "error");
+      setDownload(snap.id, null);
       return;
     }
-    // A plain link, so the browser streams it straight to disk with its own progress
+
+    // A plain link, so the browser streams it straight to disk with its own progress. The server can't
+    // send the first byte until it has checksummed every log, so its progress is shown here until then.
+    const token = progressToken();
     const link = document.createElement("a");
-    link.href = url;
+    link.href = `${url}&progress=${token}`;
     link.download = "";
     link.click();
+    setDownload(snap.id, { phase: "starting", done_bytes: 0, total_bytes: 0 });
+    await watchDownload(snap.id, token);
+  }
+
+  async function watchDownload(id: string, token: string) {
+    const progressUrl = `${base()}/api/logger/snapshot/download/progress?token=${token}`;
+    const started = Date.now();
+    while (!destroyed) {
+      await delay(DOWNLOAD_POLL_MS);
+      let j;
+      try {
+        const res = await fetch(progressUrl);
+        if (res.status === 404) {
+          // The request hasn't reached the server yet
+          if (Date.now() - started < DOWNLOAD_START_TIMEOUT_MS) continue;
+          addToast(`Download of ${id} did not start.`, "error");
+          break;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        j = await res.json();
+      } catch {
+        // Lost track of it, but the browser's download carries on regardless
+        break;
+      }
+      if (j.phase === "failed") {
+        addToast(`Download of ${id} failed: ${j.error ?? "unknown error"}`, "error");
+        break;
+      }
+      if (j.phase === "stopped") {
+        addToast(`Download of ${id} stopped before it finished.`, "error");
+        break;
+      }
+      setDownload(id, { phase: j.phase, done_bytes: j.done_bytes, total_bytes: j.total_bytes });
+      if (j.phase === "done") {
+        await delay(3000);
+        break;
+      }
+    }
+    setDownload(id, null);
   }
 
   async function handleRemove(snap: Snapshot) {
@@ -230,6 +333,7 @@
 
   onDestroy(() => {
     if (pollTimer !== null) clearInterval(pollTimer);
+    destroyed = true;
   });
 </script>
 
@@ -399,12 +503,20 @@
                 <td>{snap.description}</td>
                 <td>
                   {#if snap.state === "complete"}
+                    {@const download = downloads[snap.id]}
                     <button
                       class="btn-download"
+                      class:active={download !== undefined}
+                      style:--progress={download && download.total_bytes > 0
+                        ? `${(download.done_bytes / download.total_bytes) * 100}%`
+                        : "0%"}
                       on:click={() => handleDownload(snap)}
-                      title="Download the snapshot's log files as a zip"
+                      disabled={download !== undefined}
+                      title={download
+                        ? downloadTitle(download)
+                        : "Download the snapshot's log files as a zip"}
                     >
-                      Download
+                      {download ? downloadLabel(download) : "Download"}
                     </button>
                     <button
                       class="btn-remove"
@@ -655,8 +767,18 @@
     white-space: nowrap;
   }
 
-  .btn-download:hover {
+  .btn-download:hover:not(:disabled) {
     background: #2a2a2a;
+  }
+
+  /* While downloading, the button fills from the left as progress is made */
+  .btn-download.active {
+    min-width: 9.5em;
+    cursor: default;
+    color: #93c5fd;
+    border-color: #1e3a5f;
+    background: linear-gradient(to right, #1e3a5f var(--progress), #1a1a1a var(--progress));
+    font-variant-numeric: tabular-nums;
   }
 
   .btn-remove {

@@ -8,6 +8,7 @@
 #include <cctype>
 #include <ctime>
 #include <filesystem>
+#include <iterator>
 #include <nlohmann/json.hpp>
 #include <rclcpp/logging.hpp>
 #include <regex>
@@ -78,6 +79,9 @@ json statusToJson(const logging_msgs::msg::LoggerStatus& status) {
 
 /// Largest piece of a download read and sent at once
 constexpr size_t DOWNLOAD_CHUNK = 256 * 1024;
+/// How long a finished download's progress can still be read
+constexpr auto PROGRESS_KEPT_FOR = std::chrono::minutes(1);
+const std::regex PROGRESS_TOKEN_PATTERN("^[A-Za-z0-9_-]{8,64}$");
 
 std::string isoTime(int64_t epoch_s) {
     time_t t = static_cast<time_t>(epoch_s);
@@ -285,6 +289,26 @@ LoggerHandler::LoggerHandler(std::shared_ptr<basin::web_core::WebNode> web_node,
     web_node->getServer().Get("/api/logger/snapshot/download",
                               [this](const httplib::Request& req, httplib::Response& res) { handleDownload(req, res); });
 
+    // GET /api/logger/snapshot/download/progress?token=<token>
+    web_node->getServer().Get("/api/logger/snapshot/download/progress",
+                              [this](const httplib::Request& req, httplib::Response& res) {
+                                  std::string token = req.get_param_value("token");
+                                  std::lock_guard<std::mutex> lock(progress_mutex_);
+                                  auto it = progress_.find(token);
+                                  if (it == progress_.end()) {
+                                      setError(res, 404, "No download with that token");
+                                      return;
+                                  }
+                                  const DownloadProgress& progress = it->second;
+                                  json j{ { "phase", progress.phase },
+                                          { "done_bytes", progress.done_bytes },
+                                          { "total_bytes", progress.total_bytes } };
+                                  if (!progress.error.empty()) {
+                                      j["error"] = progress.error;
+                                  }
+                                  res.set_content(j.dump(), "application/json");
+                              });
+
     RCLCPP_INFO(logger_,
                 "LoggerHandler initialised\n"
                 "  service : %s\n"
@@ -301,6 +325,19 @@ void LoggerHandler::handleDownload(const httplib::Request& req, httplib::Respons
         setError(res, 400, "Missing required parameter: id");
         return;
     }
+    std::string token = req.get_param_value("progress");
+    if (!token.empty() && !std::regex_match(token, PROGRESS_TOKEN_PATTERN)) {
+        setError(res, 400, "progress must be 8-64 letters, digits, '_' or '-'");
+        return;
+    }
+    if (req.method == "HEAD") {
+        token.clear();
+    }
+    // An error the page watching the progress also sees, as the browser shows it only as a failed download
+    auto fail = [&](int status, const std::string& message) {
+        setError(res, status, message);
+        setProgress(token, "failed", 0, 0, message);
+    };
 
     // Find the snapshot and its logs as the logger sees them. Paths only ever come from this scan
     basin::log_util::SnapshotInfo snapshot;
@@ -311,23 +348,23 @@ void LoggerHandler::handleDownload(const httplib::Request& req, httplib::Respons
         files = log_manager_.get_snapshot_log_files(id);
     } catch (const std::exception& e) {
         RCLCPP_ERROR(logger_, "Failed to scan log directory '%s': %s", config_.log_dir.c_str(), e.what());
-        setError(res, 500, "Failed to read the log directory");
+        fail(500, "Failed to read the log directory");
         return;
     }
     if (snapshot.id.empty()) {
-        setError(res, 404, "Snapshot " + id + " does not exist");
+        fail(404, "Snapshot " + id + " does not exist");
         return;
     }
     if (snapshot.end_time == -1) {
-        setError(res, 409, "Snapshot " + id + " is still recording");
+        fail(409, "Snapshot " + id + " is still recording");
         return;
     }
     if (files.empty()) {
-        setError(res, 404, "Snapshot " + id + " has no logs left on disk");
+        fail(404, "Snapshot " + id + " has no logs left on disk");
         return;
     }
     if (active_downloads_.load() >= config_.max_concurrent_downloads) {
-        setError(res, 429, "Too many downloads in progress, try again shortly");
+        fail(429, "Too many downloads in progress, try again shortly");
         return;
     }
     if (req.method == "HEAD") {
@@ -337,18 +374,31 @@ void LoggerHandler::handleDownload(const httplib::Request& req, httplib::Respons
 
     if (active_downloads_.fetch_add(1) >= config_.max_concurrent_downloads) {
         active_downloads_--;
-        setError(res, 429, "Too many downloads in progress, try again shortly");
+        fail(429, "Too many downloads in progress, try again shortly");
         return;
     }
 
     std::sort(files.begin(), files.end());
+    // Checksumming reads every file before the first byte is sent, the slow part of a big download
+    uint64_t prepare_total = 0;
+    for (const auto& file : files) {
+        std::error_code ec;
+        uint64_t size = std::filesystem::file_size(file, ec);
+        prepare_total += ec ? 0 : size;
+    }
+    uint64_t prepared = 0;
+    setProgress(token, "preparing", 0, prepare_total);
+
     auto zip = std::make_shared<basin::web_core::ZipStream>();
     std::vector<std::string> added;
     try {
         for (const auto& file : files) {
             std::string name = std::filesystem::path(file).filename().string();
             try {
-                zip->addFile(id + "/" + name, file);
+                zip->addFile(id + "/" + name, file, [&](uint64_t n) {
+                    prepared += n;
+                    setProgress(token, "preparing", prepared, std::max(prepared, prepare_total));
+                });
                 added.push_back(name);
             } catch (const std::runtime_error& e) {
                 // Rotated away since the scan; the rest still make a useful download
@@ -357,7 +407,7 @@ void LoggerHandler::handleDownload(const httplib::Request& req, httplib::Respons
         }
         if (added.empty()) {
             active_downloads_--;
-            setError(res, 404, "Snapshot " + id + " has no logs left on disk");
+            fail(404, "Snapshot " + id + " has no logs left on disk");
             return;
         }
         zip->addData(id + "/snapshot.yaml", snapshotYaml(snapshot, added));
@@ -365,31 +415,58 @@ void LoggerHandler::handleDownload(const httplib::Request& req, httplib::Respons
     } catch (const std::exception& e) {
         active_downloads_--;
         RCLCPP_ERROR(logger_, "Failed to prepare download of snapshot %s: %s", id.c_str(), e.what());
-        setError(res, 500, "Failed to read the snapshot's logs");
+        fail(500, "Failed to read the snapshot's logs");
         return;
     }
 
     RCLCPP_INFO(logger_, "Sending snapshot %s: %zu files, %lu bytes", id.c_str(), added.size(),
                 static_cast<unsigned long>(zip->size()));
+    setProgress(token, "sending", 0, zip->size());
 
     res.set_header("Content-Disposition", "attachment; filename=\"" + safeFileName(id) + ".zip\"");
     res.set_content_provider(
         zip->size(), "application/zip",
-        [this, zip, id](size_t offset, size_t length, httplib::DataSink& sink) {
+        [this, zip, id, token](size_t offset, size_t length, httplib::DataSink& sink) {
             try {
                 std::vector<char> buffer(std::min(length, DOWNLOAD_CHUNK));
                 size_t n = zip->read(offset, buffer.data(), buffer.size());
-                return n > 0 && sink.write(buffer.data(), n);
+                if (n == 0 || !sink.write(buffer.data(), n)) {
+                    return false;
+                }
+                setProgress(token, "sending", offset + n, zip->size());
+                return true;
             } catch (const std::exception& e) {
                 RCLCPP_ERROR(logger_, "Failed to send snapshot %s: %s", id.c_str(), e.what());
+                setProgress(token, "failed", offset, zip->size(), "Failed to read the snapshot's logs");
                 return false;
             }
         },
-        [this, zip, id](bool success) {
+        [this, zip, id, token](bool success) {
             // The stream's files close once httplib drops this and the provider
             active_downloads_--;
             RCLCPP_INFO(logger_, "Snapshot %s download %s", id.c_str(), success ? "finished" : "stopped");
+            std::lock_guard<std::mutex> lock(progress_mutex_);
+            auto it = progress_.find(token);
+            if (it != progress_.end() && it->second.phase != "failed") {
+                it->second.phase = success ? "done" : "stopped";
+                it->second.updated = std::chrono::steady_clock::now();
+            }
         });
+}
+
+void LoggerHandler::setProgress(const std::string& token, const std::string& phase, uint64_t done_bytes,
+                                uint64_t total_bytes, const std::string& error) {
+    if (token.empty()) {
+        return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(progress_mutex_);
+    // Forget finished downloads; a running one is updated at least every chunk sent
+    for (auto it = progress_.begin(); it != progress_.end();) {
+        bool finished = it->second.phase == "done" || it->second.phase == "stopped" || it->second.phase == "failed";
+        it = finished && now - it->second.updated > PROGRESS_KEPT_FOR ? progress_.erase(it) : std::next(it);
+    }
+    progress_[token] = DownloadProgress{ phase, done_bytes, total_bytes, error, now };
 }
 
 // ---------------------------------------------------------------------------

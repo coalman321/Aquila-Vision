@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -35,8 +36,10 @@ class ZipStream {
     /// @brief Adds a file, reading it once to checksum it. Only its current size is ever sent
     /// @param name The entry's name in the archive, with '/' separating directories
     /// @param path The file to add
+    /// @param on_read Called as the checksum pass reads the file, with the bytes read since the last call
     /// @throws std::runtime_error if the file can't be opened or read
-    void addFile(const std::string& name, const std::filesystem::path& path);
+    void addFile(const std::string& name, const std::filesystem::path& path,
+                 const std::function<void(uint64_t)>& on_read = {});
 
     /// @brief Adds an entry whose content is held in memory
     void addData(const std::string& name, std::string data);

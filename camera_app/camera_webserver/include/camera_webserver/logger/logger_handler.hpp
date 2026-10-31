@@ -12,6 +12,7 @@
 #include <rclcpp/executors/single_threaded_executor.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <string>
+#include <unordered_map>
 
 namespace camera_web::logger {
 
@@ -75,7 +76,21 @@ struct LoggerHandlerConfig {
 ///       from log_dir, so it works without the logger running. Responds 404
 ///       for an unknown snapshot or one whose logs are gone, 409 for one still
 ///       recording, and 429 when max_concurrent_downloads are in progress.
-///       HEAD runs the same checks without building the archive.
+///       HEAD runs the same checks without building the archive. With
+///       &progress=<token> ([A-Za-z0-9_-], 8-64 characters, picked by the
+///       client), the download's progress can be read from the endpoint below.
+///
+///   GET  /api/logger/snapshot/download/progress?token=<token>
+///       The progress of the download started with that token:
+///         {
+///           "phase": "preparing" | "sending" | "done" | "stopped" | "failed",
+///           "done_bytes": <uint>,  "total_bytes": <uint>,  of the current phase
+///           "error": "..."         when failed
+///         }
+///       Preparing checksums every log before the first byte can be sent, so
+///       it can take a while for a long snapshot. Responds 404 for a token
+///       not (or no longer) known; finished downloads are forgotten after a
+///       minute.
 ///
 /// Service calls are fully synchronous from the HTTP handler's perspective;
 /// a dedicated SingleThreadedExecutor spins the service client's callback
@@ -98,6 +113,19 @@ class LoggerHandler {
     /// @brief Handles GET and HEAD of /api/logger/snapshot/download
     void handleDownload(const httplib::Request& req, httplib::Response& res);
 
+    /// @brief A download's progress, as reported by /api/logger/snapshot/download/progress
+    struct DownloadProgress {
+        std::string phase;
+        uint64_t done_bytes{ 0 };
+        uint64_t total_bytes{ 0 };
+        std::string error;
+        std::chrono::steady_clock::time_point updated;
+    };
+
+    /// @brief Records a download's progress under its token, if it has one (thread-safe)
+    void setProgress(const std::string& token, const std::string& phase, uint64_t done_bytes,
+                     uint64_t total_bytes, const std::string& error = "");
+
     // --- ROS 2 interfaces ---
     rclcpp::Client<SnapshotRequest>::SharedPtr snapshot_client_;
     rclcpp::Subscription<LoggerStatus>::SharedPtr status_sub_;
@@ -119,6 +147,9 @@ class LoggerHandler {
     /// rotate, so it changes nothing the logger owns
     basin::log_util::LogManager log_manager_;
     std::atomic<int> active_downloads_{ 0 };
+    /// Progress of the downloads started with a token, by token
+    std::mutex progress_mutex_;
+    std::unordered_map<std::string, DownloadProgress> progress_;
 
     LoggerHandlerConfig config_;
     rclcpp::Logger logger_{ rclcpp::get_logger("LoggerHandler") };

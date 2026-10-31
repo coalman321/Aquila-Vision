@@ -181,6 +181,19 @@ TEST_F(ZipStreamTest, StillSendsAFileDeletedAfterItWasAdded) {
     expectPythonExtracts(readAll(zip));
 }
 
+TEST_F(ZipStreamTest, ReportsTheChecksumPassReadingEachFile) {
+    ZipStream zip;
+    const std::string content = files_.at("snap/log_0_000000.mcap");
+    uint64_t read = 0;
+    int calls = 0;
+    zip.addFile("big", input("snap/log_0_000000.mcap"), [&](uint64_t n) {
+        read += n;
+        calls++;
+    });
+    EXPECT_EQ(read, content.size());
+    EXPECT_GE(calls, 1);
+}
+
 TEST_F(ZipStreamTest, RejectsAMissingFile) {
     ZipStream zip;
     EXPECT_THROW(zip.addFile("missing", dir_ / "in" / "missing.mcap"), std::runtime_error);

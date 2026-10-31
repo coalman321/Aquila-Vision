@@ -131,6 +131,7 @@ def generate_launch_description() -> list:
                         "rosout": {"name": "/rosout", "throttle": 0},
                         "tf": {"name": "/tf", "throttle": 0},
                         "tf_static": {"name": "/tf_static", "throttle": 0},
+                        "logger_status" : {"name": "log/logger_status", "throttle": 0}
                     },
 
                     "event_snapshots": {
