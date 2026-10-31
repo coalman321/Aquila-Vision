@@ -60,7 +60,7 @@
   ];
 
   let startCameraName: string = "";
-  let boardType: BoardType = "chessboard";
+  let boardType: BoardType = "charuco";
   // Chessboard: internal corners. ChArUco: squares.
   let boardRows: number = 7;
   let boardCols: number = 10;

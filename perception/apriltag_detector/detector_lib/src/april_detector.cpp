@@ -105,7 +105,11 @@ std::vector<AprilTagDetection> AprilDetect::detectCommon() {
             detection.tag_corners.emplace(gpu_detection->id, tag_corners_2d_);
 
             std::vector<cv::Point3d> tag_corners_3d_ = tag_corners_cache_.at(-1).getCorners();
-            detection.tag_pose = getTagTransform(tag_corners_2d_, tag_corners_3d_);
+            std::optional<Eigen::Isometry3d> tag_pose = getTagTransform(tag_corners_2d_, tag_corners_3d_);
+            if (!tag_pose) {
+                continue;
+            }
+            detection.tag_pose = *tag_pose;
 
             // Push the detection into the output data
             detections.push_back(detection);
@@ -166,10 +170,14 @@ std::vector<AprilTagDetection> AprilDetect::detectCommon() {
         // now solve for the multitag pose
         if (!tag_points.empty()) {
             RCLCPP_DEBUG(logger_, "Solving for multitag pose with %lu points", tag_points.size());
-            Eigen::Isometry3d map_to_cam = getTagTransform(image_points, tag_points);
+            std::optional<Eigen::Isometry3d> map_to_cam = getTagTransform(image_points, tag_points);
+            if (!map_to_cam) {
+                // no usable solution this frame, report it the same as seeing no cached tags
+                return detections;
+            }
 
             // https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
-            detection.tag_pose = map_to_cam.inverse();
+            detection.tag_pose = map_to_cam->inverse();
         }
 
         detections.push_back(detection);
@@ -179,8 +187,8 @@ std::vector<AprilTagDetection> AprilDetect::detectCommon() {
     return detections;
 }
 
-Eigen::Isometry3d AprilDetect::getTagTransform(const std::vector<cv::Point2d> &image_points,
-                                               const std::vector<cv::Point3d> &tag_points) {
+std::optional<Eigen::Isometry3d> AprilDetect::getTagTransform(const std::vector<cv::Point2d> &image_points,
+                                                              const std::vector<cv::Point3d> &tag_points) {
     RCLCPP_DEBUG(logger_, "Solving PnP for %lu points", image_points.size());
 
     // print each correlated point pair
@@ -193,7 +201,13 @@ Eigen::Isometry3d AprilDetect::getTagTransform(const std::vector<cv::Point2d> &i
     cv::Mat rot_mat(3, 3, cv::DataType<double>::type, 0.0);
     cv::Mat r_vec(3, 1, cv::DataType<double>::type, 0.0);
     cv::Mat t_vec(3, 1, cv::DataType<double>::type, 0.0);
-    cv::solvePnP(tag_points, image_points, intrinsic_mat_, dist_coeffs_, r_vec, t_vec, false, cv::SOLVEPNP_SQPNP);
+    try {
+        cv::solvePnP(tag_points, image_points, intrinsic_mat_, dist_coeffs_, r_vec, t_vec, false, cv::SOLVEPNP_SQPNP);
+    } catch (const cv::Exception &e) {
+        // SQPnP asserts on degenerate input, e.g. a tag only a few pixels across
+        RCLCPP_WARN(logger_, "PnP failed for %lu points, skipping: %s", image_points.size(), e.what());
+        return std::nullopt;
+    }
     // cv::solvePnP(tag_points, image_points, intrinsic_mat_, dist_coeffs_, r_vec,
     // t_vec, false, cv::SOLVEPNP_IPPE_SQUARE);
     cv::Rodrigues(r_vec, rot_mat);

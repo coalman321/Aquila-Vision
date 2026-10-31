@@ -55,6 +55,7 @@ class DetectorNode : public basin::node_core::NodeCore {
     std::array<double, 36u> detection_covar_;                   ///< Covariance for detections
     std::unique_ptr<landmark_detector::AprilDetect> detector_;  ///< Instance of the detector used for the last frame
     bool detector_needs_reinit_{ false };                       ///< Flag to indicate detector needs reinitialization
+    uint64_t images_received_{ 0 };                             ///< Images received since startup, for status logs
 
     image_transport::CameraSubscriber camera_subscriber_;  ///< Subscription for the camera data
 

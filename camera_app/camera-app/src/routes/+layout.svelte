@@ -3,8 +3,17 @@
 	import logoFull from '$lib/assets/logo-full.svg';
 	import { page } from '$app/stores';
 	import { base } from '$app/paths';
+	import { onMount } from 'svelte';
+	import { fetchSourceSummaries, sourceSummaries } from '$lib/stores/sources';
 
 	let { children } = $props();
+
+	const sourcesNeedAttention = $derived($sourceSummaries.some((source) => source.missing_calibration));
+
+	onMount(() => {
+		// best effort, the sources page reports its own fetch errors
+		fetchSourceSummaries(window.location.origin).catch(() => {});
+	});
 
 	const tabs = [
 		{ name: 'Pipelines', href: `${base}/`, routeId: '/' },
@@ -39,7 +48,12 @@
 							href={tab.href}
 							class:active={isActive(tab.routeId)}
 							aria-current={isActive(tab.routeId) ? 'page' : undefined}
-						>{tab.name}</a>
+						>{tab.name}{#if tab.routeId === '/sources' && sourcesNeedAttention}<span
+									class="warning-icon"
+									title="An enabled source has no calibration file selected"
+									aria-label="Warning: an enabled source has no calibration file selected"
+									role="img">⚠</span
+								>{/if}</a>
 					</li>
 				{/each}
 			</ul>
@@ -142,6 +156,11 @@
 	.tab-nav a:focus {
 		outline: 3px solid rgba(220, 38, 38, 0.6);
 		outline-offset: 2px;
+	}
+
+	.warning-icon {
+		margin-left: 6px;
+		color: #fbbf24;
 	}
 
 	.tab-nav .tab-top {

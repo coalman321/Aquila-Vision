@@ -4,6 +4,7 @@
 #include <Eigen/Geometry>
 #include <map>
 #include <opencv2/core.hpp>
+#include <optional>
 #include <vector>
 
 #include <rclcpp/logging.hpp>
@@ -86,8 +87,8 @@ class AprilDetect {
     /// @param image_points
     /// @param tag_points
     /// @return
-    Eigen::Isometry3d getTagTransform(const std::vector<cv::Point2d> &image_points,
-                                      const std::vector<cv::Point3d> &tag_points);
+    std::optional<Eigen::Isometry3d> getTagTransform(const std::vector<cv::Point2d> &image_points,
+                                                     const std::vector<cv::Point3d> &tag_points);
 
     std::vector<cv::Point2d> getImagePoints(const apriltag_detection_t *detection);
 

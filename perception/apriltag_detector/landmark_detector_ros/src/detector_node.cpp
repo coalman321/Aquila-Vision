@@ -16,9 +16,13 @@ using namespace std::placeholders;
 namespace landmark_detector {
 
 DetectorNode::DetectorNode() : basin::node_core::NodeCore("detector_node") {
+    RCLCPP_DEBUG(get_logger(), "Loading parameters");
     params_ = std::make_unique<DetectorNodeParams>(this);
+    RCLCPP_INFO(get_logger(), "Parameters loaded: camera_topic=%s enabled=%d is_multitag=%d tag_edge_length=%f",
+                params_->camera_topic.c_str(), params_->enabled, params_->is_multitag, params_->tag_edge_length);
 
     // Initialize TF2 listener
+    RCLCPP_DEBUG(get_logger(), "Creating TF listener");
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
@@ -33,6 +37,7 @@ DetectorNode::DetectorNode() : basin::node_core::NodeCore("detector_node") {
     std::string node_name = get_name();
 
     // Setup the detection publisher
+    RCLCPP_DEBUG(get_logger(), "Creating publishers");
     detection_pub_ =
         create_publisher<vision_msgs::msg::Detection3DArray>(node_name + "/detections", rclcpp::SensorDataQoS());
 
@@ -46,11 +51,15 @@ DetectorNode::DetectorNode() : basin::node_core::NodeCore("detector_node") {
     // Setup the camera subscription
     // QoS(10) is the reliable, keep-last-10 rmw_qos_profile_default the node-pointer overloads used.
     image_transport::TransportHints hints(*this);
+    RCLCPP_DEBUG(get_logger(), "Subscribing to camera %s with transport %s", params_->camera_topic.c_str(),
+                 hints.getTransport().c_str());
     camera_subscriber_ = image_transport::create_camera_subscription(
         *this, params_->camera_topic, std::bind(&DetectorNode::detectTags, this, _1, _2), hints.getTransport(),
         rclcpp::QoS(10));
+    RCLCPP_DEBUG(get_logger(), "Camera subscription created on %s", camera_subscriber_.getTopic().c_str());
 
     // Setup the debug publisher
+    RCLCPP_DEBUG(get_logger(), "Creating debug image publisher");
     debug_image_pub_ = image_transport::create_publisher(*this, node_name + "/debug_image", rclcpp::QoS(10));
 
     RCLCPP_INFO(get_logger(), "Detector loaded, waiting for image data");
@@ -76,8 +85,15 @@ void DetectorNode::initDetector(sensor_msgs::msg::CameraInfo::ConstSharedPtr inf
 
 void DetectorNode::detectTags(sensor_msgs::msg::Image::ConstSharedPtr image,
                               sensor_msgs::msg::CameraInfo::ConstSharedPtr info) {
+    images_received_++;
+    if (images_received_ == 1) {
+        RCLCPP_INFO(get_logger(), "Received first image: %ux%u %s", image->width, image->height,
+                    image->encoding.c_str());
+    }
+
     // Check if detector is enabled
     if (!params_->enabled) {
+        RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 5000, "Detector disabled, dropping images");
         return;
     }
 
@@ -88,6 +104,8 @@ void DetectorNode::detectTags(sensor_msgs::msg::Image::ConstSharedPtr image,
 
         RCLCPP_INFO(get_logger(), "Detector parameters changed, reinitializing");
 
+        RCLCPP_DEBUG(get_logger(), "Camera info: %ux%u, d size %zu, k size %zu", info->width, info->height,
+                     info->d.size(), info->k.size());
         initDetector(info);
 
         RCLCPP_INFO(get_logger(), "Detector reinitialized");
@@ -240,7 +258,10 @@ geometry_msgs::msg::Pose DetectorNode::convertTagPose(const Eigen::Isometry3d &c
 
 void DetectorNode::onTick() {
     // hot load detector if needed
-    // RCLCPP_INFO(get_logger(), "Detector tick");
+    RCLCPP_DEBUG_THROTTLE(get_logger(), *get_clock(), 1000,
+                          "Tick: enabled=%d detector_initialized=%d images_received=%lu camera_publishers=%zu",
+                          params_->enabled, detector_ != nullptr, images_received_,
+                          camera_subscriber_.getNumPublishers());
 
     // Update tracked frames on each tick
     if (params_->is_multitag && detector_ != nullptr) {
@@ -321,8 +342,20 @@ void DetectorNode::shutdown() {
 
 int main(int argc, char *argv[]) {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<landmark_detector::DetectorNode>());
+    rclcpp::Logger logger = rclcpp::get_logger("detector_main");
+
+    RCLCPP_INFO(logger, "Constructing detector node");
+    auto node = std::make_shared<landmark_detector::DetectorNode>();
+
+    RCLCPP_INFO(logger, "Spinning detector node");
+    rclcpp::spin(node);
+
+    RCLCPP_INFO(logger, "Spin returned (rclcpp::ok=%d), destroying detector node", rclcpp::ok());
+    node.reset();
+
+    RCLCPP_INFO(logger, "Shutting down rclcpp");
     rclcpp::shutdown();
 
+    RCLCPP_INFO(logger, "Exiting");
     return 0;
 }
