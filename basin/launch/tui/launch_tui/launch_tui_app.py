@@ -1,7 +1,5 @@
-import os.path
 from typing import Dict, List
 
-from ament_index_python import get_package_share_directory
 from process_msgs.msg import ProcessInfo
 from process_msgs.srv import RemoteRequest
 import rclpy
@@ -29,9 +27,8 @@ STAT_TABLE = [
 
 
 class LaunchApp(App):
-    CSS_PATH = os.path.join(
-        get_package_share_directory('launch_tui'), 'css', 'layout.tcss'
-    )
+    # Relative to this file, so it resolves the same from a colcon install or Bazel runfiles.
+    CSS_PATH = 'layout.tcss'
 
     BINDINGS = [
         Binding('s', action='start_launch', description='Start launch'),

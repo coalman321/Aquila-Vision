@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- TagSolution converter: `localization_msgs/msg/TagSolution` converts to `foxglove.PoseInFrame`,
+  so the 3D panel draws the multitag solution in the `field` frame. Solutions with no detected tags
+  are skipped.
+
 ## 0.4.1
 
 - Continuous Logger: shows how much of the disk snapshot-protected logs fill against the logger's

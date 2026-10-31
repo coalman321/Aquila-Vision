@@ -375,6 +375,15 @@ use_repo(
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 use_repo(pip, "pip_ros")
 
+# This workspace's own pip hub, for Python packages @pip_ros doesn't carry (e.g. textual, used by
+# //basin/launch/tui). See //third_party/python for how to add one and regenerate the lock.
+pip.parse(
+    hub_name = "pip_aquila",
+    python_version = "3.12",
+    requirements_lock = "//third_party/python:requirements_lock.txt",
+)
+use_repo(pip, "pip_aquila")
+
 # Hermetic Rust toolchain, needed to build rmw_zenoh_cpp's zenoh-c dependency.
 rs_toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains")
 rs_toolchains.toolchain(

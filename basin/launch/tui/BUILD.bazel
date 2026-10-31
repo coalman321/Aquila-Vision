@@ -1,0 +1,40 @@
+load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
+load("@pip_aquila//:requirements.bzl", "requirement")
+load("@rosidl_default_generators//:defs.bzl", "py_ros_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_ros_library(
+    name = "launch_tui_py_msgs",
+    deps = [
+        "//interfaces/process_msgs/msg:ProcessInfo",
+        "//interfaces/process_msgs/msg:ProcessList",
+        "//interfaces/process_msgs/srv:RemoteRequest",
+    ],
+)
+
+py_library(
+    name = "launch_tui_lib",
+    srcs = glob(["launch_tui/*.py"]),
+    data = ["launch_tui/layout.tcss"],
+    imports = ["."],
+    deps = [
+        ":launch_tui_py_msgs",
+        "@rclpy",
+        requirement("textual"),
+    ],
+)
+
+# Textual client for remote launch nodes' request services: `bazel run //basin/launch/tui`.
+# Not named launch_tui: the binary's launcher would sit in the runfiles at the path of the
+# launch_tui/ package and hide it.
+py_binary(
+    name = "tui",
+    srcs = ["main.py"],
+    main = "main.py",
+    # textual's pygments and typing_extensions come from @pip_aquila, rclpy's from @pip_ros. Both
+    # are pinned to the same versions (see //third_party/python:requirements.in), so it doesn't
+    # matter which copy the venv keeps.
+    package_collisions = "ignore",
+    deps = [":launch_tui_lib"],
+)

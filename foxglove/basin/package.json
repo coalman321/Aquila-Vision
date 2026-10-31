@@ -1,9 +1,9 @@
 {
   "name": "basin",
   "displayName": "Basin",
-  "description": "Foxglove Studio panels for the basin runtime: launch control, fault monitoring and the continuous logger.",
+  "description": "Foxglove Studio panels for the basin runtime (launch control, fault monitoring, the continuous logger) and message converters for its messages.",
   "publisher": "aquila",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "license": "MIT",
   "private": true,
   "main": "./dist/extension.js",

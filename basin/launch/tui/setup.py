@@ -10,8 +10,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/css', ['layout.tcss'])
     ],
+    package_data={package_name: ['layout.tcss']},
     install_requires=['setuptools', 'textual>=0.11.0'],
     zip_safe=True,
     maintainer='coalman321',

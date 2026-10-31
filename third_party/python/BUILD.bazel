@@ -1,0 +1,12 @@
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+
+package(default_visibility = ["//visibility:public"])
+
+# Locks requirements.in into requirements_lock.txt, which MODULE.bazel's @pip_aquila hub reads.
+# `bazel run //third_party/python:requirements.update` regenerates it; `bazel test
+# //third_party/python:requirements_test` checks it is up to date.
+compile_pip_requirements(
+    name = "requirements",
+    src = "requirements.in",
+    requirements_txt = "requirements_lock.txt",
+)
