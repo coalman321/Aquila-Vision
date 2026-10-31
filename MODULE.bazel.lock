@@ -3198,7 +3198,7 @@
     "@@rosdistro+//python:defs.bzl%pip_ros": {
       "general": {
         "bzlTransitiveDigest": "5XAaJvdHdp8CSH8MRNEE8L1FStPhOywjJapvBpj8UsU=",
-        "usagesDigest": "gO7tBVKKuWYlQmsMD1PHjdQCcKnRifLBPnFcyG3pjoQ=",
+        "usagesDigest": "tJBdCaSqNdLKJgxaKSQNswh6CN7/XbPRkrOU24r8L7I=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},

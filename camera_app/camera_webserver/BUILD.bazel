@@ -110,6 +110,8 @@ ament_index(
         ":static_content",
         # The camera driver launch/application.prod.py starts for each camera source.
         "//drivers/basler_driver:ament_index",
+        # Message definitions, so bags cut by snapshot extraction keep full MCAP schemas.
+        "//interfaces:all_definitions",
     ],
 )
 

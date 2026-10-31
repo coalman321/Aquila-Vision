@@ -1,1 +1,31 @@
 package(default_visibility = ["//visibility:public"])
+
+# The definitions of every interface the system publishes, for processes that describe types they
+# aren't linked against: the continuous logger embeds each topic's full `.msg` text as its MCAP schema
+# (rosbag2's LocalMessageDefinitionSource looks it up in the ament index), without which Foxglove
+# can't decode the bag. Dependencies of a type (e.g. std_msgs/Header -> builtin_interfaces/Time) are
+# looked up the same way, so they need their own package here too.
+filegroup(
+    name = "all_definitions",
+    data = [
+        "//interfaces/basler_driver_msgs:ament_index",
+        "//interfaces/calibration_msgs:ament_index",
+        "//interfaces/driver_msgs:ament_index",
+        "//interfaces/generic_msgs:ament_index",
+        "//interfaces/localization_msgs:ament_index",
+        "//interfaces/logging_msgs:ament_index",
+        "//interfaces/process_msgs:ament_index",
+        "//interfaces/status_msgs:ament_index",
+        "//interfaces/timesync_msgs:ament_index",
+        "@builtin_interfaces//:ament_index",
+        "@diagnostic_msgs//:ament_index",
+        "@geometry_msgs//:ament_index",
+        "@lifecycle_msgs//:ament_index",
+        "@nav_msgs//:ament_index",
+        "@rcl_interfaces//:ament_index",
+        "@sensor_msgs//:ament_index",
+        "@std_msgs//:ament_index",
+        "@tf2_msgs//:ament_index",
+        "@vision_msgs//:ament_index",
+    ],
+)

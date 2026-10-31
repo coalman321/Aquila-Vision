@@ -6,6 +6,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <vector>
 
 #include "basin/log_util/log_manager.hpp"
 #include "basin/log_util/log_writer.hpp"
@@ -119,6 +120,32 @@ TEST_F(LogManagerTest, ProtectsALogEndingPartWayIntoASnapshotsFirstSecond) {
     manager_.check_disk("");
 
     EXPECT_TRUE(std::filesystem::exists(log));
+}
+
+TEST_F(LogManagerTest, MatchesSnapshotsToALogsTimeRangeWidenedToWholeSeconds) {
+    // Read from the log's summary as [2000, 2006]
+    auto log = writeLog("log_0", 2000.6, 2005.5, 100);
+    addSnapshot("ends_before", 1990, 1999);
+    addSnapshot("ends_at_start", 1990, 2000);
+    addSnapshot("starts_at_end", 2006, 2010);
+    addSnapshot("starts_after", 2007, 2010);
+    manager_.scan_log_directory();
+
+    EXPECT_TRUE(manager_.get_snapshot_log_files("ends_before").empty());
+    EXPECT_EQ(manager_.get_snapshot_log_files("ends_at_start"), std::vector<std::string>{ log.string() });
+    EXPECT_EQ(manager_.get_snapshot_log_files("starts_at_end"), std::vector<std::string>{ log.string() });
+    EXPECT_TRUE(manager_.get_snapshot_log_files("starts_after").empty());
+}
+
+TEST_F(LogManagerTest, StillReadsALogCutOffBeforeItsSummary) {
+    // As a crash or power loss leaves the log being written: no summary to read the time range from, so it is
+    // read the slow way, by scanning the file
+    auto log = writeLog("log_0", 2000.0, 2005.0, 100);
+    std::filesystem::resize_file(log, std::filesystem::file_size(log) - 64);
+    addSnapshot("snap", 1990, 2010);
+
+    EXPECT_EQ(manager_.scan_log_directory(), 1u);
+    EXPECT_EQ(manager_.get_snapshot_log_files("snap"), std::vector<std::string>{ log.string() });
 }
 
 TEST_F(LogManagerTest, NeverRotatesTheActiveLog) {

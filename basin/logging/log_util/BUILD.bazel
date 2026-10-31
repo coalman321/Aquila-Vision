@@ -100,6 +100,30 @@ cc_test(
     ],
 )
 
+# The MCAP schemas the writer records: each topic's full `.msg` text, found through the ament index
+# of //interfaces:all_definitions, so Foxglove can decode the bag.
+cc_test(
+    name = "log_writer_test",
+    size = "small",
+    srcs = ["test/test_log_writer.cpp"],
+    data = [
+        "//interfaces:all_definitions",
+        "@rosbag2_cpp//:ament_index",
+        "@rosbag2_storage//:ament_index",
+    ],
+    dynamic_deps = select({
+        ":dynamic_mode_off": [],
+        ":rmw_dynamic": [":transitive_dynamic_deps_test"],
+        "//conditions:default": [],
+    }),
+    deps = TEST_DYNAMIC_DEPENDENCIES.values() + [
+        ":log_util",
+        "@rosdistro//cc:googletest",
+        "@sensor_msgs//:cc",
+        "@tf2_msgs//:cc",
+    ],
+)
+
 # The snapshot lifecycle and its WAL, including recovery after a crash.
 cc_test(
     name = "snapshot_tracker_test",
