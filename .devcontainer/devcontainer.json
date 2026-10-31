@@ -59,7 +59,8 @@
                 "llvm-vs-code-extensions.vscode-clangd",
                 "Anthropic.claude-code",
                 "streetsidesoftware.code-spell-checker",
-                "ms-python.python"
+                "ms-python.python",
+                "svelte.svelte-vscode"
             ]
         }
     }

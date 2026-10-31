@@ -525,6 +525,7 @@
       serverUrl={serverUrl}
       apiEndpoint={`${base()}/api/upload/calibrations`}
       hintText="Upload calibration files (JSON, YAML, etc.)"
+      width="100%"
       on:uploaded={handleFileUploaded}
       on:removed={handleFileRemoved}
     />

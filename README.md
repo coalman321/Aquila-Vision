@@ -23,7 +23,7 @@ FRC 4143's GPU accelerated vision system, run on a Jetson Orin Nano. It reads Ba
     - checks for L4T 39.2.1; creates the `aquila` service user; writes the team number to `/etc/app/team` and makes `/etc/app` (the app's cameras, pipelines and calibrations) owned by `aquila`;
     - boots to a text console; gives the Ethernet port the static address `10.TE.AM.<octet>` with systemd-networkd; 
     - installs a udev rule for Basler USB3 cameras; raises the UDP buffer limits Fast DDS needs; 
-    - installs `aquila-runtime.service` (MAXN power mode, `jetson_clocks`, fan, `usbfs_memory_mb=64`);
+    - installs `aquila-runtime.service` (MAXN power mode, `jetson_clocks`, `usbfs_memory_mb=64`; sets the `cool` fan profile);
     - holds the `nvidia-l4t-*` packages; sets up USB-stick automount (`/mnt/usb`); and installs and enables `aquila-vision.service`. `--skip-network` leaves networking alone; `--no-hold` leaves apt alone.
 
 ### Deploying a release

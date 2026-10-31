@@ -214,6 +214,13 @@ bool BaslerCamera::applyCamSpecificStartupSettings(const BaslerDriverParameters&
 bool BaslerCamera::startGrabbing(const BaslerDriverParameters& parameters) {
     try {
         grabbingStopping();
+        {
+            // A previous process may have died mid-acquisition, leaving the camera streaming with its
+            // transport-layer parameters (PixelFormat, size) locked. Stop it unconditionally.
+            GError* stop_error = nullptr;
+            arv_camera_stop_acquisition(camera_, &stop_error);
+            g_clear_error(&stop_error);
+        }
         if (genicam_.isAvailable("ShutterMode")) {
             const std::string result = setShutterMode(parameters.shutter_mode_);
             if (result != "done") {
@@ -228,14 +235,19 @@ bool BaslerCamera::startGrabbing(const BaslerDriverParameters& parameters) {
             bool fallback_found = false;
             for (const std::string& gen_api_encoding : available_image_encodings_) {
                 std::string ros_encoding;
-                if (encodingconversions::genAPI2Ros(gen_api_encoding, ros_encoding) &&
-                    setImageEncoding(ros_encoding) == "done") {
+                if (!encodingconversions::genAPI2Ros(gen_api_encoding, ros_encoding)) {
+                    continue;
+                }
+                const std::string fallback_result = setImageEncoding(ros_encoding);
+                if (fallback_result == "done") {
                     RCLCPP_WARN_STREAM(LOGGER, "Falling back to encoding: " << ros_encoding);
                     fallback_found = true;
                     break;
                 }
+                RCLCPP_WARN_STREAM(LOGGER, "Fallback encoding '" << ros_encoding << "' failed: " << fallback_result);
             }
             if (!fallback_found) {
+                RCLCPP_ERROR_STREAM(LOGGER, "No usable image encoding found");
                 return false;
             }
         }
