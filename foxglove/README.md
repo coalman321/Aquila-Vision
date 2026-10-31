@@ -8,7 +8,7 @@ topics and services the bridge exposes.
 
 | Extension | What it does |
 |-----------|--------------|
-| [basin](basin/) | Panels for the basin runtime: **Launch Control** (monitor and control the processes `launch_core` runs), **Fault Monitor** (live faults from `/state/fault_report`), the TUIs' jobs in Studio, and **Continuous Logger** (liveness, snapshots and events of the logger) |
+| [basin](basin/) | Panels for the basin runtime: **Launch Control** (monitor and control the processes `launch_core` runs), **Fault Monitor** (live faults from `/state/fault_report`), the TUIs' jobs in Studio, **Continuous Logger** (liveness, snapshots and events of the logger), and a **TagSolution** converter that draws the multitag pose in the 3D panel |
 
 ## Build and install
 

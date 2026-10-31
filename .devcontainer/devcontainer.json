@@ -17,7 +17,7 @@
 
     // Docker defaults the hostname to the container ID, which shows up as a
     // random hex string in the shell prompt. Pin it to something readable.
-    "runArgs": ["--hostname=aquila"],
+    "runArgs": ["--hostname=aquila", "--network=host"],
 
     // Pass the host's NVIDIA GPUs through (docker run --gpus all) when the host
     // has them, so CUDA tests can launch kernels. "optional" keeps the container

@@ -1,17 +1,19 @@
 # Basin
 
 Foxglove Studio panels for the basin runtime, in one extension. Add any of them to a layout from
-Studio's **Add panel** menu.
+Studio's **Add panel** menu. It also registers message converters, which let Studio's built-in
+panels show our messages.
 
 | Panel | What it does |
 |-------|--------------|
 | [Launch Control](#launch-control) | Monitor and control the processes run by `launch_core` (the [launch TUI](../../basin/launch/tui/)'s job) |
 | [Fault Monitor](#fault-monitor) | The live faults reported on `/state/fault_report` (the [fault monitor TUI](../../basin/safety/scripts/fault_monitor_tui.py)'s job) |
 | [Continuous Logger](#continuous-logger) | See whether the [continuous logger](../../basin/logging/continuous_logger/) is alive, its disk usage, snapshots and configured events; start and stop snapshots and send it events |
+| [TagSolution converter](#tagsolution-converter) | Shows the AprilTag detector's multitag solution in the 3D panel, as a `foxglove.PoseInFrame` |
 
-All three read what the `foxglove_bridge` that the robot app launches exposes (`ws://<host>:8765`).
+All of them read what the `foxglove_bridge` that the robot app launches exposes (`ws://<host>:8765`).
 For Studio to describe those messages, the bridge must have `process_msgs`, `status_msgs` and
-`logging_msgs` in its runfiles; add them to the app's
+`logging_msgs` (and `localization_msgs` for the converter) in its runfiles; add them to the app's
 `INTERFACE_INDEXES`.
 
 ## Launch Control
@@ -165,12 +167,29 @@ latest at once. The names, enums and message shapes are in
 [interfaces/logging_msgs](../../interfaces/logging_msgs/) and
 [interfaces/process_msgs](../../interfaces/process_msgs/).
 
+## TagSolution converter
+
+Converts `localization_msgs/msg/TagSolution`, which the
+[AprilTag detector](../../perception/apriltag_detector/landmark_detector_ros/) publishes on
+`<node>/tag_solution`, to `foxglove.PoseInFrame`:
+
+- **Frame:** always `field`. `header.frame_id` is the camera image's frame, but the pose is the
+  camera in the field, which is also how the detector stamps its own `<node>/multitag_pose`.
+- **Time:** `header.stamp`.
+- **Empty solutions** (no `detected_tags`) are dropped. They carry an identity pose, so drawing them
+  would put the camera at the field origin.
+
+To see it, add a 3D panel, set its display frame to `field`, and turn on the `tag_solution` topic in
+the panel's **Topics** settings. Arrow or axis style, colour and history length are in that topic's
+settings. MCAP recordings carry their schemas, so the converter works on logs whatever the bridge
+has.
+
 ## Try it
 
 ```bash
 bazel run //<your app>              # launch node + foxglove_bridge
 cd foxglove/basin
-npm ci && npm run package   # aquila.basin-0.4.0.foxe
+npm ci && npm run package   # aquila.basin-0.5.0.foxe
 ```
 
 Install the `.foxe` in Studio (see [foxglove/README.md](../README.md#build-and-install); from a
@@ -184,7 +203,7 @@ panel. Uninstall that one from Studio's Extensions list, or both will offer a La
 
 | File | Role |
 |------|------|
-| [src/index.ts](src/index.ts) | `activate`: registers the panels |
+| [src/index.ts](src/index.ts) | `activate`: registers the panels and message converters |
 | [src/common/theme.ts](src/common/theme.ts) | CSS every panel shares: light and dark colors, buttons, badges |
 | [src/launch/LaunchControlPanel.tsx](src/launch/LaunchControlPanel.tsx) | Launch Control (React) |
 | [src/launch/launchProtocol.ts](src/launch/launchProtocol.ts) | Topic/service names, enums, message parsing; no React |
@@ -195,6 +214,7 @@ panel. Uninstall that one from Studio's Extensions list, or both will offer a La
 | [src/logger/ContinuousLoggerPanel.tsx](src/logger/ContinuousLoggerPanel.tsx) | Continuous Logger (React) |
 | [src/logger/loggerProtocol.ts](src/logger/loggerProtocol.ts) | Topic/service names, enums, message parsing, formatting; no React |
 | [src/logger/loggerStyles.ts](src/logger/loggerStyles.ts) | Continuous Logger CSS |
+| [src/localization/tagSolution.ts](src/localization/tagSolution.ts) | TagSolution to `foxglove.PoseInFrame`; no extension API |
 
 To add a panel, create `src/<area>/` with the same three pieces, register it in
-[src/index.ts](src/index.ts), and add a section above.
+[src/index.ts](src/index.ts), and add a section above. A message converter is one file under `src/<area>/`, registered the same way.
