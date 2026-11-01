@@ -1,0 +1,55 @@
+load("@aspect_rules_py//py:defs.bzl", "py_binary")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@pip_aquila//:requirements.bzl", aquila_requirement = "requirement")
+load("@pip_ros//:requirements.bzl", "requirement")
+load(":verbs.bzl", "entry_points")
+
+package(default_visibility = ["//visibility:public"])
+
+# The `ros2` CLI (`ros2 topic list`, `ros2 node info`, ...), which the hermetic build doesn't
+# otherwise provide:
+#
+#   bazel run //tools/ros2 -- topic list
+#
+# ros2cli finds its verbs through importlib.metadata entry points. RCR's @ros2cli ships the egg-info
+# for that, but the verb packages (@ros2topic, ...) don't, so it's written out here, copied from each
+# package's setup.py (see verbs.bzl). To enable another verb, add its bazel_dep and py_binary dep,
+# and its entry points there.
+write_file(
+    name = "pkg_info",
+    out = "aquila_ros2_verbs.egg-info/PKG-INFO",
+    content = [
+        "Metadata-Version: 2.1",
+        "Name: aquila_ros2_verbs",
+        "Version: 0.0.0",
+    ],
+)
+
+write_file(
+    name = "entry_points_txt",
+    out = "aquila_ros2_verbs.egg-info/entry_points.txt",
+    content = entry_points(),
+)
+
+py_binary(
+    name = "ros2",
+    srcs = ["ros2.py"],
+    data = [
+        ":entry_points_txt",
+        ":pkg_info",
+    ],
+    imports = ["."],
+    main = "ros2.py",
+    deps = [
+        "@ros2action",
+        "@ros2cli",
+        "@ros2node",
+        "@ros2param",
+        "@ros2pkg",
+        "@ros2service",
+        "@ros2topic",
+        aquila_requirement("argcomplete"),
+        aquila_requirement("psutil"),
+        requirement("packaging"),
+    ],
+)
