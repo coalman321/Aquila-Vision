@@ -152,6 +152,19 @@ bazel_dep(name = "ament_cmake_gen_version_h", version = "2.8.7-3.rcr.2")
 # target's comment for why it's needed). Directly pulled in by ros_core.
 bazel_dep(name = "ros2launch", version = "0.0.0")
 
+# Referenced by //tools/ros2 (a `ros2 <verb>` equivalent). ros2cli is the multiplexer; the others
+# are its verbs. All are already pulled in transitively by ros_core, so "0.0.0" resolves.
+bazel_dep(name = "ros2cli", version = "0.0.0")
+bazel_dep(name = "ros2topic", version = "0.0.0")
+bazel_dep(name = "ros2node", version = "0.0.0")
+bazel_dep(name = "ros2service", version = "0.0.0")
+bazel_dep(name = "ros2param", version = "0.0.0")
+bazel_dep(name = "ros2action", version = "0.0.0")
+bazel_dep(name = "ros2pkg", version = "0.0.0")
+
+# write_file, for //tools/ros2's generated entry_points.txt.
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+
 # launch_ros (a ros2launch dependency) imports lifecycle_msgs.srv at runtime but doesn't
 # declare it as a bazel_dep of its own py_library -- see the deps comment on
 # //tools/ros2_launch's py_binary for the workaround. rclcpp_lifecycle (pulled in by

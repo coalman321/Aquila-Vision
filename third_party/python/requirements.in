@@ -2,6 +2,10 @@
 # After editing, regenerate the lock: `bazel run //third_party/python:requirements.update`.
 textual>=0.11.0
 
+# ros2cli and its verbs (//tools/ros2) import these but RCR's packages don't declare them.
+psutil
+argcomplete
+
 # Also in @pip_ros (rosdistro's requirements.txt), which a binary using both hubs gets a second
 # copy of. Pinned to the same versions there so either copy is the same file; bump these together
 # with the rosdistro version in MODULE.bazel.

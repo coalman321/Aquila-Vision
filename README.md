@@ -135,6 +135,17 @@ bazel run //:refresh_compile_commands
 
 Rerun it after adding or removing source files or changing build flags. External sources (ROS, LLVM) are left out; see [BUILD.bazel](BUILD.bazel).
 
+### ROS 2 CLI
+
+The build is hermetic, so there is no `ros2` on the `PATH`. Run it through Bazel instead:
+
+```
+bazel run //tools/ros2 -- topic list
+bazel run //tools/ros2 -- topic echo /tag_solutions
+```
+
+It supports the `action`, `node`, `param`, `pkg`, `service` and `topic` commands. `interface` isn't enabled: the hermetic ament index has no `.msg` files for it to read. To add a command, see [tools/ros2/verbs.bzl](tools/ros2/verbs.bzl).
+
 ### Releasing a version
 
 The version lives in [VERSION](VERSION) and is shown on the UI's Status tab (served at `/api/version`). Bump it before building, like `npm version`; with a clean working tree:

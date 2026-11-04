@@ -67,6 +67,11 @@ common --enable_platform_specific_config
 # "file not found" in code that builds fine. Fetch just the headers.
 build --remote_download_regex='.*\.(h|hh|hpp|hxx|inc|inl|ipp|tcc|cuh)$|.*_include_search_directory/.*'
 
+# Optimized builds by default (the equivalent of CMake's Release). Bazel's default, fastbuild, passes
+# no -O flag, so clang compiles at -O0 -- including CUDA device code -- which makes the AprilTag
+# detector far too slow on the Jetson.
+build --compilation_mode=opt
+
 # Use the hermetic LLVM toolchain instead of any host compiler.
 build --repo_env="BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1"
 
